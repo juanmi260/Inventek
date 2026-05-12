@@ -1,0 +1,77 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg: 255 255 255;
+    --surface: 246 246 247;
+    --surface-2: 240 240 242;
+    --text: 14 15 18;
+    --muted: 107 114 128;
+    --border: 229 231 235;
+    --primary: 15 118 110;
+    --primary-fg: 255 255 255;
+    --danger: 185 28 28;
+    --warning: 180 83 9;
+    --success: 21 128 61;
+    --radius: 12px;
+  }
+
+  :root.dark {
+    --bg: 11 13 16;
+    --surface: 20 23 28;
+    --surface-2: 31 36 44;
+    --text: 243 244 246;
+    --muted: 156 163 175;
+    --border: 31 41 55;
+    --primary: 45 212 191;
+    --primary-fg: 5 46 43;
+    --danger: 248 113 113;
+    --warning: 251 191 36;
+    --success: 74 222 128;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-bg text-text font-sans antialiased;
+    overscroll-behavior-y: none;
+  }
+
+  /* Hide number input spinners on mobile */
+  input[type='number'] {
+    -moz-appearance: textfield;
+  }
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-primary ring-offset-2 ring-offset-bg;
+  }
+}
+
+@layer utilities {
+  .safe-top {
+    padding-top: env(safe-area-inset-top);
+  }
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .safe-x {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+}
