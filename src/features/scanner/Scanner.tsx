@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { startScanner, hapticTap, type ScannerControls } from '@/platform/scanner';
 import { Button } from '@/ui/Button';
 
@@ -15,64 +15,79 @@ interface ScannerError {
 
 export function Scanner({ onDetected, paused, cooldownMs = 1500 }: ScannerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const controlsRef = useRef<ScannerControls | null>(null);
   const lastDetectedAt = useRef<number>(0);
   const lastCode = useRef<string>('');
+  // Keep latest callback in a ref so changes in the parent's callback
+  // identity don't retrigger this effect (re-acquiring the camera too
+  // fast on iOS results in NotReadableError).
+  const onDetectedRef = useRef(onDetected);
+  onDetectedRef.current = onDetected;
+
   const [error, setError] = useState<ScannerError | null>(null);
   const [needsTap, setNeedsTap] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
 
-  const launch = useCallback(async () => {
-    setError(null);
-    setNeedsTap(false);
-    if (!videoRef.current) return;
-    try {
-      const controls = await startScanner(videoRef.current, (text) => {
-        const now = Date.now();
-        if (text === lastCode.current && now - lastDetectedAt.current < cooldownMs) return;
-        lastCode.current = text;
-        lastDetectedAt.current = now;
-        hapticTap();
-        onDetected(text);
-      });
-      controlsRef.current = controls;
-    } catch (e) {
-      const err = e as DOMException & { message?: string; name?: string };
-      const name = err?.name ?? '';
-      const msg = err?.message ?? String(e);
-      if (name === 'NotAllowedError' || /permission/i.test(msg)) {
-        setError({ short: 'Permiso de cámara denegado.', detail: 'Revisa Ajustes → Safari → Cámara.' });
-      } else if (name === 'NotFoundError' || /notfound/i.test(msg)) {
-        setError({ short: 'No se ha encontrado ninguna cámara.' });
-      } else if (name === 'NotReadableError' || /notreadable|abort/i.test(msg)) {
-        setError({ short: 'La cámara está siendo usada por otra app.' });
-      } else if (name === 'OverconstrainedError') {
-        setError({ short: 'La cámara no admite esa configuración.', detail: msg });
-      } else if (/play|autoplay/i.test(msg)) {
-        // Some iOS contexts need a user gesture to start playback.
-        setNeedsTap(true);
-      } else {
-        setError({ short: 'No se ha podido iniciar la cámara.', detail: `${name}: ${msg}` });
-      }
-    }
-  }, [onDetected, cooldownMs]);
-
   useEffect(() => {
     if (paused) return;
     let cancelled = false;
+    let controls: ScannerControls | null = null;
+    setError(null);
+    setNeedsTap(false);
+
     void (async () => {
-      await launch();
-      if (cancelled) {
-        controlsRef.current?.stop();
-        controlsRef.current = null;
+      if (!videoRef.current) return;
+      try {
+        controls = await startScanner(videoRef.current, (text) => {
+          const now = Date.now();
+          if (text === lastCode.current && now - lastDetectedAt.current < cooldownMs) return;
+          lastCode.current = text;
+          lastDetectedAt.current = now;
+          hapticTap();
+          onDetectedRef.current(text);
+        });
+        if (cancelled) {
+          controls.stop();
+          controls = null;
+        }
+      } catch (e) {
+        if (cancelled) return;
+        const err = e as DOMException & { message?: string; name?: string };
+        const name = err?.name ?? '';
+        const msg = err?.message ?? String(e);
+        if (name === 'NotAllowedError' || /permission/i.test(msg)) {
+          setError({
+            short: 'Permiso de cámara denegado.',
+            detail: 'Revisa Ajustes → Safari → Cámara.',
+          });
+        } else if (name === 'NotFoundError') {
+          setError({ short: 'No se ha encontrado ninguna cámara.' });
+        } else if (name === 'NotReadableError') {
+          setError({
+            short: 'La cámara no está disponible.',
+            detail:
+              'Cierra otras apps que la usen (Cámara, FaceTime, otras pestañas) y reintenta.',
+          });
+        } else if (name === 'AbortError') {
+          setError({ short: 'La cámara se ha interrumpido. Reintenta.' });
+        } else if (name === 'OverconstrainedError') {
+          setError({ short: 'La cámara no admite esa configuración.', detail: msg });
+        } else if (/play|autoplay/i.test(msg)) {
+          setNeedsTap(true);
+        } else {
+          setError({ short: 'No se ha podido iniciar la cámara.', detail: `${name}: ${msg}` });
+        }
       }
     })();
+
     return () => {
       cancelled = true;
-      controlsRef.current?.stop();
-      controlsRef.current = null;
+      if (controls) {
+        controls.stop();
+        controls = null;
+      }
     };
-  }, [paused, launch, retryKey]);
+    // Intentionally only re-run on these. onDetected lives in a ref above.
+  }, [paused, cooldownMs, retryKey]);
 
   if (error) {
     return (
@@ -103,7 +118,9 @@ export function Scanner({ onDetected, paused, cooldownMs = 1500 }: ScannerProps)
       </div>
       {needsTap && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/70">
-          <Button onClick={() => void launch()}>Toca para activar la cámara</Button>
+          <Button onClick={() => setRetryKey((k) => k + 1)}>
+            Toca para activar la cámara
+          </Button>
         </div>
       )}
     </div>
