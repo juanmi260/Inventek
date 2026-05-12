@@ -2,8 +2,9 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Home, Package, ScanLine, ArrowRightLeft, MoreHorizontal } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import { useActiveWarehouse } from '@/state/active-warehouse';
-import { useEffect } from 'react';
+import { Suspense, useEffect } from 'react';
 import { ensurePersistentStorage } from '@/platform/storage';
+import { RouteLoader } from '@/ui/RouteLoader';
 
 interface Tab {
   to: string;
@@ -63,7 +64,9 @@ export function Layout() {
       </header>
 
       <main className="mx-auto w-full max-w-3xl flex-1 pb-24">
-        <Outlet />
+        <Suspense fallback={<RouteLoader />}>
+          <Outlet />
+        </Suspense>
       </main>
 
       <nav
