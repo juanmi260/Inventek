@@ -15,25 +15,31 @@ const MorePage = lazy(() => import('@/pages/more/MorePage'));
 const SettingsPage = lazy(() => import('@/pages/more/SettingsPage'));
 const BackupPage = lazy(() => import('@/pages/more/BackupPage'));
 
-export const router = createBrowserRouter([
-  {
-    path: '/',
-    element: <Layout />,
-    errorElement: <ErrorPage />,
-    children: [
-      { index: true, element: <DashboardPage /> },
-      { path: 'products', element: <ProductsPage /> },
-      { path: 'products/new', element: <ProductEditPage /> },
-      { path: 'products/:id', element: <ProductDetailPage /> },
-      { path: 'products/:id/edit', element: <ProductEditPage /> },
-      { path: 'warehouses', element: <WarehousesPage /> },
-      { path: 'scan', element: <ScanPage /> },
-      { path: 'movements', element: <MovementsPage /> },
-      { path: 'movements/new', element: <NewMovementPage /> },
-      { path: 'more', element: <MorePage /> },
-      { path: 'more/settings', element: <SettingsPage /> },
-      { path: 'more/backup', element: <BackupPage /> },
-      { path: '*', element: <Navigate to="/" replace /> },
-    ],
-  },
-]);
+// Strip the trailing slash so React Router accepts it as a basename.
+const basename = import.meta.env.BASE_URL.replace(/\/$/, '') || '/';
+
+export const router = createBrowserRouter(
+  [
+    {
+      path: '/',
+      element: <Layout />,
+      errorElement: <ErrorPage />,
+      children: [
+        { index: true, element: <DashboardPage /> },
+        { path: 'products', element: <ProductsPage /> },
+        { path: 'products/new', element: <ProductEditPage /> },
+        { path: 'products/:id', element: <ProductDetailPage /> },
+        { path: 'products/:id/edit', element: <ProductEditPage /> },
+        { path: 'warehouses', element: <WarehousesPage /> },
+        { path: 'scan', element: <ScanPage /> },
+        { path: 'movements', element: <MovementsPage /> },
+        { path: 'movements/new', element: <NewMovementPage /> },
+        { path: 'more', element: <MorePage /> },
+        { path: 'more/settings', element: <SettingsPage /> },
+        { path: 'more/backup', element: <BackupPage /> },
+        { path: '*', element: <Navigate to="/" replace /> },
+      ],
+    },
+  ],
+  { basename },
+);

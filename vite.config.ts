@@ -8,7 +8,12 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
   version: string;
 };
 
+// Base path. Default '/' for local dev/build. CI deploys to GitHub Pages
+// set BASE=/Inventek/ so assets/routes resolve under that path.
+const base = process.env.BASE ?? '/';
+
 export default defineConfig({
+  base,
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
   },
@@ -27,12 +32,14 @@ export default defineConfig({
       registerType: 'prompt',
       injectRegister: 'auto',
       includeAssets: ['favicon.svg', 'icons/*.png', 'icons/*.svg'],
+      // URLs in manifest are relative to the manifest file location, so they
+      // automatically resolve correctly under any `base` (e.g. /Inventek/).
       manifest: {
         name: 'Inventek',
         short_name: 'Inventek',
         description: 'Control de inventario offline para uno o varios almacenes.',
-        start_url: '/?source=pwa',
-        scope: '/',
+        start_url: './?source=pwa',
+        scope: './',
         display: 'standalone',
         orientation: 'portrait',
         background_color: '#0b0d10',
@@ -41,30 +48,39 @@ export default defineConfig({
         dir: 'ltr',
         categories: ['business', 'productivity', 'utilities'],
         icons: [
-          { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+          { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+          { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
           {
-            src: '/icons/icon-mask-192.png',
+            src: 'icons/icon-mask-192.png',
             sizes: '192x192',
             type: 'image/png',
             purpose: 'maskable',
           },
           {
-            src: '/icons/icon-mask-512.png',
+            src: 'icons/icon-mask-512.png',
             sizes: '512x512',
             type: 'image/png',
             purpose: 'maskable',
           },
         ],
         shortcuts: [
-          { name: 'Escanear', url: '/scan', icons: [{ src: '/icons/scan-96.png', sizes: '96x96' }] },
-          { name: 'Movimiento', url: '/movements/new', icons: [{ src: '/icons/move-96.png', sizes: '96x96' }] },
-          { name: 'Recuento', url: '/counts/new', icons: [{ src: '/icons/count-96.png', sizes: '96x96' }] },
+          { name: 'Escanear', url: 'scan', icons: [{ src: 'icons/scan-96.png', sizes: '96x96' }] },
+          {
+            name: 'Movimiento',
+            url: 'movements/new',
+            icons: [{ src: 'icons/move-96.png', sizes: '96x96' }],
+          },
+          {
+            name: 'Recuento',
+            url: 'counts/new',
+            icons: [{ src: 'icons/count-96.png', sizes: '96x96' }],
+          },
         ],
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,woff2,svg,png,webp,ico}'],
-        navigateFallback: '/index.html',
+        // navigateFallback must match a precached URL, which includes the base.
+        navigateFallback: `${base}index.html`,
         cleanupOutdatedCaches: true,
         clientsClaim: true,
         runtimeCaching: [

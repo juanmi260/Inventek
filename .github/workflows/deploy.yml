@@ -1,0 +1,60 @@
+name: Deploy PWA to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deploy in flight; never cancel the running one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # `npm ci` keeps deterministic versions. If sharp's platform optional
+      # deps cause friction on Linux, switch this to `npm install`.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        env:
+          BASE: /Inventek/
+        run: npm run build
+
+      # GitHub Pages doesn't do SPA fallback, so serve index.html as 404
+      # to let React Router resolve deep links like /Inventek/products/123.
+      - name: Copy index.html to 404.html for SPA routing
+        run: cp dist/index.html dist/404.html
+
+      # Prevent Jekyll from touching anything (we serve raw static).
+      - name: Add .nojekyll
+        run: touch dist/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
