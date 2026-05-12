@@ -20,9 +20,6 @@ export function Scanner({ onDetected, paused, cooldownMs = 1500 }: ScannerProps)
   const lastDetectedAt = useRef<number>(0);
   const lastCode = useRef<string>('');
 
-  // Latest callback + paused state kept in refs so we don't re-acquire the
-  // camera every time the parent re-renders (iOS gives NotReadableError when
-  // the stream is acquired and released in rapid succession).
   const onDetectedRef = useRef(onDetected);
   onDetectedRef.current = onDetected;
   const pausedRef = useRef(paused);
@@ -37,15 +34,30 @@ export function Scanner({ onDetected, paused, cooldownMs = 1500 }: ScannerProps)
     setError(null);
     setStarting(true);
     try {
-      const controls = await startScanner(videoRef.current, (text) => {
-        if (pausedRef.current) return;
-        const now = Date.now();
-        if (text === lastCode.current && now - lastDetectedAt.current < cooldownMs) return;
-        lastCode.current = text;
-        lastDetectedAt.current = now;
-        hapticTap();
-        onDetectedRef.current(text);
-      });
+      const controls = await startScanner(
+        videoRef.current,
+        (text) => {
+          if (pausedRef.current) return;
+          const now = Date.now();
+          if (text === lastCode.current && now - lastDetectedAt.current < cooldownMs) return;
+          lastCode.current = text;
+          lastDetectedAt.current = now;
+          hapticTap();
+          onDetectedRef.current(text);
+        },
+        {
+          onStreamEnded: () => {
+            controlsRef.current?.stop();
+            controlsRef.current = null;
+            setRunning(false);
+            setError({
+              short: 'iOS ha cortado la cámara.',
+              detail:
+                'Suele pasar en modo PWA. Prueba a abrir Inventek desde Safari (no como app instalada) o cierra otras apps que usen cámara.',
+            });
+          },
+        },
+      );
       controlsRef.current = controls;
       setRunning(true);
     } catch (e) {
@@ -76,14 +88,18 @@ export function Scanner({ onDetected, paused, cooldownMs = 1500 }: ScannerProps)
     }
   };
 
-  // Tear down on unmount only — never on prop changes. iOS hates fast
-  // re-acquisition; if a user navigates between screens we stop cleanly.
   useEffect(() => {
     return () => {
       controlsRef.current?.stop();
       controlsRef.current = null;
     };
   }, []);
+
+  // Idle (before first tap): button-only overlay covers the video.
+  // Starting / running: NO solid overlay — iOS needs the <video> visible
+  // or it kills the stream silently.
+  const showIdleOverlay = !running && !starting && !error;
+  const showErrorOverlay = !!error;
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-black">
@@ -104,22 +120,30 @@ export function Scanner({ onDetected, paused, cooldownMs = 1500 }: ScannerProps)
         </div>
       )}
 
-      {!running && !error && (
+      {starting && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-10 flex justify-center">
+          <span className="rounded bg-black/70 px-3 py-1.5 text-sm text-white shadow-card">
+            Iniciando cámara…
+          </span>
+        </div>
+      )}
+
+      {showIdleOverlay && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black p-6 text-center">
           <Camera size={48} className="text-white/70" aria-hidden />
           <p className="max-w-xs text-sm text-white/80">
             Toca para activar la cámara. iOS requiere un toque explícito para que se inicie.
           </p>
-          <Button onClick={() => void start()} loading={starting} size="lg">
+          <Button onClick={() => void start()} size="lg">
             Iniciar cámara
           </Button>
         </div>
       )}
 
-      {error && (
+      {showErrorOverlay && error && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black p-6 text-center">
           <p className="text-sm text-white">{error.short}</p>
-          {error.detail && <p className="text-xs text-white/70">{error.detail}</p>}
+          {error.detail && <p className="max-w-xs text-xs text-white/70">{error.detail}</p>}
           <Button
             variant="secondary"
             onClick={() => {

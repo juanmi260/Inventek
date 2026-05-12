@@ -7,6 +7,11 @@ export interface ScannerControls {
   stop: () => void;
 }
 
+export interface StartScannerOptions {
+  /** Called if the camera track dies unexpectedly after a successful start. */
+  onStreamEnded?: () => void;
+}
+
 const hints = new Map();
 hints.set(DecodeHintType.POSSIBLE_FORMATS, [
   BarcodeFormat.EAN_13,
@@ -21,28 +26,26 @@ hints.set(DecodeHintType.POSSIBLE_FORMATS, [
 ]);
 
 /**
- * Manual scanner setup. iOS Safari (especially in standalone PWA mode) is
- * picky about how the video element is configured *before* the stream is
- * attached and *before* `.play()` is awaited. Doing this ourselves and only
- * handing the already-playing element to ZXing for decode-only has been the
- * most reliable path.
+ * Resolves as soon as the camera stream is attached and `<video>` is playing.
+ * The barcode decoder is launched in the background and does not block start;
+ * if it fails to initialize the camera still works visually and the user gets
+ * a clear failure mode.
  */
 export async function startScanner(
   videoEl: HTMLVideoElement,
   onResult: ScanCallback,
+  opts: StartScannerOptions = {},
 ): Promise<ScannerControls> {
   // 1. iOS-friendly attributes BEFORE attaching a stream.
   videoEl.setAttribute('autoplay', '');
   videoEl.setAttribute('muted', '');
   videoEl.setAttribute('playsinline', '');
-  // Older WebKit needs the legacy attribute name too.
   videoEl.setAttribute('webkit-playsinline', '');
   videoEl.muted = true;
   videoEl.playsInline = true;
   videoEl.controls = false;
 
-  // 2. Acquire the rear camera explicitly (ideal, not exact, for graceful
-  //    fallback on devices without an environment camera).
+  // 2. Acquire the rear camera explicitly.
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: false,
     video: {
@@ -52,8 +55,13 @@ export async function startScanner(
     },
   });
 
-  // 3. Attach stream and explicitly await play(). On iOS this can reject
-  //    with NotAllowedError if autoplay is blocked; we surface that.
+  // 3. Watch for iOS killing the stream after the fact.
+  const onEnded = () => {
+    opts.onStreamEnded?.();
+  };
+  stream.getVideoTracks().forEach((t) => t.addEventListener('ended', onEnded));
+
+  // 4. Attach stream and explicitly await play().
   videoEl.srcObject = stream;
   try {
     await videoEl.play();
@@ -63,19 +71,47 @@ export async function startScanner(
     throw e;
   }
 
-  // 4. Hand the already-playing element to ZXing. Using decodeFromVideoElement
-  //    means ZXing won't try to (re)acquire the stream or call play() again.
+  // 5. Start the decoder in the background — do NOT await it. If iOS revokes
+  //    the stream `decodeFromVideoElement` can hang indefinitely waiting for
+  //    a first frame; we don't want that to block start().
+  let decoder: { stop: () => void } | null = null;
+  let stopped = false;
   const reader = new BrowserMultiFormatReader(hints);
-  const decoder = await reader.decodeFromVideoElement(videoEl, (result) => {
-    if (result) onResult(result.getText());
-  });
+
+  reader
+    .decodeFromVideoElement(videoEl, (result) => {
+      if (result) onResult(result.getText());
+    })
+    .then((d) => {
+      if (stopped) {
+        try {
+          d.stop();
+        } catch {
+          // ignore
+        }
+      } else {
+        decoder = d;
+      }
+    })
+    .catch((err) => {
+      // Decoder couldn't start (e.g. iOS killed the stream); surface it
+      // through the same ended hook so the UI shows a clean error instead
+      // of a spinner forever.
+      console.warn('[scanner] decoder failed to start:', err);
+      opts.onStreamEnded?.();
+    });
 
   return {
     stop: () => {
-      try {
-        decoder.stop();
-      } catch {
-        // ignore
+      stopped = true;
+      stream.getVideoTracks().forEach((t) => t.removeEventListener('ended', onEnded));
+      if (decoder) {
+        try {
+          decoder.stop();
+        } catch {
+          // ignore
+        }
+        decoder = null;
       }
       stream.getTracks().forEach((t) => t.stop());
       videoEl.srcObject = null;
