@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { startScanner, hapticTap, type ScannerControls } from '@/platform/scanner';
 import { Button } from '@/ui/Button';
+import { Camera } from 'lucide-react';
 
 export interface ScannerProps {
   onDetected: (code: string) => void;
@@ -15,91 +16,74 @@ interface ScannerError {
 
 export function Scanner({ onDetected, paused, cooldownMs = 1500 }: ScannerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const controlsRef = useRef<ScannerControls | null>(null);
   const lastDetectedAt = useRef<number>(0);
   const lastCode = useRef<string>('');
-  // Keep latest callback in a ref so changes in the parent's callback
-  // identity don't retrigger this effect (re-acquiring the camera too
-  // fast on iOS results in NotReadableError).
+
+  // Latest callback + paused state kept in refs so we don't re-acquire the
+  // camera every time the parent re-renders (iOS gives NotReadableError when
+  // the stream is acquired and released in rapid succession).
   const onDetectedRef = useRef(onDetected);
   onDetectedRef.current = onDetected;
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
 
+  const [running, setRunning] = useState(false);
+  const [starting, setStarting] = useState(false);
   const [error, setError] = useState<ScannerError | null>(null);
-  const [needsTap, setNeedsTap] = useState(false);
-  const [retryKey, setRetryKey] = useState(0);
 
-  useEffect(() => {
-    if (paused) return;
-    let cancelled = false;
-    let controls: ScannerControls | null = null;
+  const start = async () => {
+    if (!videoRef.current || controlsRef.current || starting) return;
     setError(null);
-    setNeedsTap(false);
-
-    void (async () => {
-      if (!videoRef.current) return;
-      try {
-        controls = await startScanner(videoRef.current, (text) => {
-          const now = Date.now();
-          if (text === lastCode.current && now - lastDetectedAt.current < cooldownMs) return;
-          lastCode.current = text;
-          lastDetectedAt.current = now;
-          hapticTap();
-          onDetectedRef.current(text);
+    setStarting(true);
+    try {
+      const controls = await startScanner(videoRef.current, (text) => {
+        if (pausedRef.current) return;
+        const now = Date.now();
+        if (text === lastCode.current && now - lastDetectedAt.current < cooldownMs) return;
+        lastCode.current = text;
+        lastDetectedAt.current = now;
+        hapticTap();
+        onDetectedRef.current(text);
+      });
+      controlsRef.current = controls;
+      setRunning(true);
+    } catch (e) {
+      const err = e as DOMException & { message?: string; name?: string };
+      const name = err?.name ?? '';
+      const msg = err?.message ?? String(e);
+      if (name === 'NotAllowedError' || /permission/i.test(msg)) {
+        setError({
+          short: 'Permiso de cámara denegado.',
+          detail: 'Revisa Ajustes → Safari → Cámara.',
         });
-        if (cancelled) {
-          controls.stop();
-          controls = null;
-        }
-      } catch (e) {
-        if (cancelled) return;
-        const err = e as DOMException & { message?: string; name?: string };
-        const name = err?.name ?? '';
-        const msg = err?.message ?? String(e);
-        if (name === 'NotAllowedError' || /permission/i.test(msg)) {
-          setError({
-            short: 'Permiso de cámara denegado.',
-            detail: 'Revisa Ajustes → Safari → Cámara.',
-          });
-        } else if (name === 'NotFoundError') {
-          setError({ short: 'No se ha encontrado ninguna cámara.' });
-        } else if (name === 'NotReadableError') {
-          setError({
-            short: 'La cámara no está disponible.',
-            detail:
-              'Cierra otras apps que la usen (Cámara, FaceTime, otras pestañas) y reintenta.',
-          });
-        } else if (name === 'AbortError') {
-          setError({ short: 'La cámara se ha interrumpido. Reintenta.' });
-        } else if (name === 'OverconstrainedError') {
-          setError({ short: 'La cámara no admite esa configuración.', detail: msg });
-        } else if (/play|autoplay/i.test(msg)) {
-          setNeedsTap(true);
-        } else {
-          setError({ short: 'No se ha podido iniciar la cámara.', detail: `${name}: ${msg}` });
-        }
+      } else if (name === 'NotFoundError') {
+        setError({ short: 'No se ha encontrado ninguna cámara.' });
+      } else if (name === 'NotReadableError') {
+        setError({
+          short: 'La cámara no está disponible.',
+          detail: 'Cierra otras apps que la usen (Cámara, FaceTime…) y reintenta.',
+        });
+      } else if (name === 'AbortError') {
+        setError({ short: 'La cámara se ha interrumpido. Reintenta.' });
+      } else if (name === 'OverconstrainedError') {
+        setError({ short: 'La cámara no admite esa configuración.', detail: msg });
+      } else {
+        setError({ short: 'No se ha podido iniciar la cámara.', detail: `${name}: ${msg}` });
       }
-    })();
+    } finally {
+      setStarting(false);
+    }
+  };
 
+  // Tear down on unmount only — never on prop changes. iOS hates fast
+  // re-acquisition; if a user navigates between screens we stop cleanly.
+  useEffect(() => {
     return () => {
-      cancelled = true;
-      if (controls) {
-        controls.stop();
-        controls = null;
-      }
+      controlsRef.current?.stop();
+      controlsRef.current = null;
     };
-    // Intentionally only re-run on these. onDetected lives in a ref above.
-  }, [paused, cooldownMs, retryKey]);
-
-  if (error) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-        <p className="text-sm text-white">{error.short}</p>
-        {error.detail && <p className="text-xs text-white/70">{error.detail}</p>}
-        <Button variant="secondary" onClick={() => setRetryKey((k) => k + 1)}>
-          Reintentar
-        </Button>
-      </div>
-    );
-  }
+  }, []);
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-black">
@@ -110,16 +94,40 @@ export function Scanner({ onDetected, paused, cooldownMs = 1500 }: ScannerProps)
         muted
         className="absolute inset-0 h-full w-full object-cover"
       />
-      <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-        <div className="relative h-48 w-72 max-w-[80vw]">
-          <div className="absolute inset-0 rounded-lg border-2 border-white/70 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]" />
-          <div className="absolute left-0 right-0 top-1/2 h-px animate-pulse bg-primary" />
+
+      {running && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="relative h-48 w-72 max-w-[80vw]">
+            <div className="absolute inset-0 rounded-lg border-2 border-white/70 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]" />
+            <div className="absolute left-0 right-0 top-1/2 h-px animate-pulse bg-primary" />
+          </div>
         </div>
-      </div>
-      {needsTap && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/70">
-          <Button onClick={() => setRetryKey((k) => k + 1)}>
-            Toca para activar la cámara
+      )}
+
+      {!running && !error && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black p-6 text-center">
+          <Camera size={48} className="text-white/70" aria-hidden />
+          <p className="max-w-xs text-sm text-white/80">
+            Toca para activar la cámara. iOS requiere un toque explícito para que se inicie.
+          </p>
+          <Button onClick={() => void start()} loading={starting} size="lg">
+            Iniciar cámara
+          </Button>
+        </div>
+      )}
+
+      {error && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black p-6 text-center">
+          <p className="text-sm text-white">{error.short}</p>
+          {error.detail && <p className="text-xs text-white/70">{error.detail}</p>}
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setError(null);
+              void start();
+            }}
+          >
+            Reintentar
           </Button>
         </div>
       )}
