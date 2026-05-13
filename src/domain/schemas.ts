@@ -24,6 +24,8 @@ export const productInputSchema = z.object({
   salePrice: z.number().nonnegative().optional(),
   taxRate: z.number().min(0).max(100).optional(),
   active: z.boolean().default(true),
+  // Image is binary; passed through directly without validation by Zod.
+  imageBlob: z.any().optional(),
 });
 export type ProductInput = z.infer<typeof productInputSchema>;
 

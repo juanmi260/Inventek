@@ -14,6 +14,7 @@ const NewMovementPage = lazy(() => import('@/pages/movements/NewMovementPage'));
 const MorePage = lazy(() => import('@/pages/more/MorePage'));
 const SettingsPage = lazy(() => import('@/pages/more/SettingsPage'));
 const BackupPage = lazy(() => import('@/pages/more/BackupPage'));
+const ReportsPage = lazy(() => import('@/pages/reports/ReportsPage'));
 
 // Strip the trailing slash so React Router accepts it as a basename.
 const basename = import.meta.env.BASE_URL.replace(/\/$/, '') || '/';
@@ -37,6 +38,7 @@ export const router = createBrowserRouter(
         { path: 'more', element: <MorePage /> },
         { path: 'more/settings', element: <SettingsPage /> },
         { path: 'more/backup', element: <BackupPage /> },
+        { path: 'reports', element: <ReportsPage /> },
         { path: '*', element: <Navigate to="/" replace /> },
       ],
     },

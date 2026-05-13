@@ -28,18 +28,18 @@ Plan en fases con hitos medibles. Cada fase termina con una versión instalable 
 
 **Done cuando:** un usuario con un almacén y 50 productos puede operar un día de trabajo completo sin pegas en un Android de gama media.
 
-## Fase 2 · Producción ligera (Semanas 5–7) — 🟡 parcial
+## Fase 2 · Producción ligera (Semanas 5–7) — ✅ completada
 
 **Objetivo:** lo que un usuario realista pediría en su primera semana.
 
 - [x] Multi-código de barras por producto.
-- [ ] Imágenes de producto. _(la entidad ya admite `imageBlob`, falta UI de captura/visualización)_
-- [ ] Stock mínimo/máximo + alertas en dashboard. _(las alertas se muestran si los valores existen, pero falta UI para fijar mín/máx por producto-almacén)_
-- [ ] Histórico de movimientos con filtros y virtualización. _(listado plano OK; faltan filtros tipo chip y virtualización)_
-- [ ] Reportes básicos (stock, valoración).
-- [ ] Export CSV / XLSX (SheetJS). _(libs instaladas, sin código)_
+- [x] Imágenes de producto (captura desde cámara o galería + compresión con canvas a max 800px / JPEG q=0.8).
+- [x] Stock mínimo/máximo + alertas en dashboard (con editor de mín/máx y ubicación en la ficha del producto por almacén).
+- [x] Histórico de movimientos con filtros (chips por tipo, almacén y rango temporal) y carga incremental (load-more, 50 por página).
+- [x] Reportes básicos (stock consolidado por almacén, valoración a coste y a venta, margen).
+- [x] Export CSV / XLSX (SheetJS + papaparse) en catálogo, stock y movimientos con filtros aplicados.
 - [x] Auto-backup en OPFS con retención (14 últimos).
-- [ ] Pantalla de configuración completa. _(hay tema, persistencia y borrado; faltan moneda, formato de fecha, sonidos)_
+- [x] Pantalla de configuración con tema, moneda, locale, sonidos, vibración, stock negativo y persistencia.
 
 **Done cuando:** se puede usar como única herramienta para una tienda pequeña con 500 productos.
 

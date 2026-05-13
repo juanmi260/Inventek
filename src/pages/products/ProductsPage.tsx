@@ -7,6 +7,8 @@ import { Input } from '@/ui/Input';
 import { PageHeader } from '@/ui/PageHeader';
 import { EmptyState } from '@/ui/EmptyState';
 import { Plus, Package } from 'lucide-react';
+import { BlobImage } from '@/ui/BlobImage';
+import { ExportMenu } from '@/ui/ExportMenu';
 import type { Product } from '@/domain/entities';
 
 export default function ProductsPage() {
@@ -29,9 +31,12 @@ export default function ProductsPage() {
       <PageHeader
         title="Productos"
         actions={
-          <Link to="/products/new">
-            <Button size="sm" iconStart={<Plus size={18} />}>Nuevo</Button>
-          </Link>
+          <div className="flex gap-1">
+            <ExportMenu target="catalog" />
+            <Link to="/products/new">
+              <Button size="sm" iconStart={<Plus size={18} />}>Nuevo</Button>
+            </Link>
+          </div>
         }
       />
 
@@ -65,8 +70,12 @@ export default function ProductsPage() {
                 to={`/products/${p.id}`}
                 className="flex items-center gap-3 px-3 py-3 hover:bg-surface"
               >
-                <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded bg-surface2 text-muted">
-                  <Package size={18} />
+                <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded bg-surface2 text-muted">
+                  {p.imageBlob ? (
+                    <BlobImage blob={p.imageBlob} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <Package size={18} />
+                  )}
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-medium">{p.name}</div>

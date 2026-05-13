@@ -3,18 +3,33 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/data/db';
 import { Button } from '@/ui/Button';
 import { PageHeader } from '@/ui/PageHeader';
-import { Pencil, Trash2, ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft } from 'lucide-react';
+import {
+  Pencil,
+  Trash2,
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  ArrowRightLeft,
+  Settings2,
+  AlertTriangle,
+} from 'lucide-react';
 import { formatNumber } from '@/utils/format';
 import { productRepo } from '@/data/repositories';
 import { showToast } from '@/ui/Toast';
 import { ConfirmDialog } from '@/ui/ConfirmDialog';
-import { useState } from 'react';
+import { Sheet } from '@/ui/Sheet';
+import { Input } from '@/ui/Input';
+import { BlobImage } from '@/ui/BlobImage';
+import { setStockLimits } from '@/domain/use-cases/setStockLimits';
+import { useMemo, useState } from 'react';
 import type { Product, StockLevel, Warehouse } from '@/domain/entities';
 
 export default function ProductDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [askDelete, setAskDelete] = useState(false);
+  const [limitsFor, setLimitsFor] = useState<{ warehouse: Warehouse; level?: StockLevel } | null>(
+    null,
+  );
 
   const product = useLiveQuery(
     () => (id ? db.products.get(id) : undefined),
@@ -26,10 +41,16 @@ export default function ProductDetailPage() {
     [] as StockLevel[],
   );
   const warehouses = useLiveQuery(
-    () => db.warehouses.filter((w) => !w.deletedAt).toArray(),
+    () => db.warehouses.filter((w) => !w.deletedAt && !w.archived).toArray(),
     [],
     [] as Warehouse[],
   );
+
+  // Compose a row per active warehouse, even if no StockLevel exists yet.
+  const rows = useMemo(() => {
+    const byKey = new Map(levels.map((l) => [l.warehouseId, l]));
+    return warehouses.map((w) => ({ warehouse: w, level: byKey.get(w.id) }));
+  }, [warehouses, levels]);
 
   if (!product) {
     return (
@@ -48,17 +69,24 @@ export default function ProductDetailPage() {
         title={product.name}
         back="/products"
         actions={
-          <>
-            <Link to={`/products/${product.id}/edit`} aria-label="Editar">
-              <Button size="sm" variant="secondary" iconStart={<Pencil size={16} />}>
-                Editar
-              </Button>
-            </Link>
-          </>
+          <Link to={`/products/${product.id}/edit`} aria-label="Editar">
+            <Button size="sm" variant="secondary" iconStart={<Pencil size={16} />}>
+              Editar
+            </Button>
+          </Link>
         }
       />
 
       <div className="px-3">
+        {product.imageBlob && (
+          <div className="mb-3 overflow-hidden rounded border border-border bg-surface">
+            <BlobImage
+              blob={product.imageBlob}
+              alt={product.name}
+              className="block max-h-72 w-full object-cover"
+            />
+          </div>
+        )}
         <div className="rounded border border-border bg-surface p-3">
           <div className="text-xs text-muted">SKU</div>
           <div className="font-mono">{product.sku}</div>
@@ -85,24 +113,50 @@ export default function ProductDetailPage() {
         <h2 className="mt-4 px-1 text-sm font-semibold uppercase tracking-wide text-muted">
           Stock por almacén · total {formatNumber(total)}
         </h2>
-        {levels.length === 0 ? (
+        {rows.length === 0 ? (
           <div className="mt-2 rounded border border-dashed border-border p-4 text-center text-sm text-muted">
-            Aún no hay stock registrado.
+            No hay almacenes activos.
           </div>
         ) : (
           <ul className="mt-2 space-y-1.5">
-            {levels.map((l) => {
-              const w = warehouses.find((x) => x.id === l.warehouseId);
+            {rows.map(({ warehouse: w, level: l }) => {
+              const qty = l?.quantity ?? 0;
+              const min = l?.minStock;
+              const low = min != null && qty < min;
               return (
                 <li
-                  key={l.id}
-                  className="flex items-center justify-between rounded border border-border bg-surface px-3 py-2"
+                  key={w.id}
+                  className={
+                    'flex items-center justify-between rounded border bg-surface px-3 py-2 ' +
+                    (low ? 'border-warning/40 bg-warning/5' : 'border-border')
+                  }
                 >
-                  <div className="min-w-0">
-                    <div className="truncate font-medium">{w?.name ?? l.warehouseId}</div>
-                    {l.location && <div className="text-xs text-muted">{l.location}</div>}
+                  <button
+                    type="button"
+                    onClick={() => setLimitsFor({ warehouse: w, level: l })}
+                    className="min-w-0 flex-1 text-left"
+                  >
+                    <div className="flex items-center gap-1 truncate font-medium">
+                      {w.name}
+                      {low && <AlertTriangle size={14} className="text-warning" aria-label="Bajo mínimo" />}
+                    </div>
+                    <div className="text-xs text-muted">
+                      {l?.location ?? '—'}
+                      {min != null && ` · mín ${formatNumber(min)}`}
+                      {l?.maxStock != null && ` · máx ${formatNumber(l.maxStock)}`}
+                    </div>
+                  </button>
+                  <div className="flex items-center gap-2">
+                    <div className="font-mono text-lg">{formatNumber(qty)}</div>
+                    <button
+                      type="button"
+                      onClick={() => setLimitsFor({ warehouse: w, level: l })}
+                      aria-label={`Configurar mín/máx en ${w.name}`}
+                      className="text-muted hover:text-text"
+                    >
+                      <Settings2 size={18} />
+                    </button>
                   </div>
-                  <div className="font-mono text-lg">{formatNumber(l.quantity)}</div>
                 </li>
               );
             })}
@@ -147,6 +201,97 @@ export default function ProductDetailPage() {
           navigate('/products');
         }}
       />
+
+      {limitsFor && (
+        <LimitsSheet
+          product={product}
+          warehouse={limitsFor.warehouse}
+          level={limitsFor.level}
+          onClose={() => setLimitsFor(null)}
+        />
+      )}
     </>
+  );
+}
+
+function LimitsSheet({
+  product,
+  warehouse,
+  level,
+  onClose,
+}: {
+  product: Product;
+  warehouse: Warehouse;
+  level?: StockLevel;
+  onClose: () => void;
+}) {
+  const [minStock, setMinStock] = useState(level?.minStock?.toString() ?? '');
+  const [maxStock, setMaxStock] = useState(level?.maxStock?.toString() ?? '');
+  const [location, setLocation] = useState(level?.location ?? '');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    const res = await setStockLimits({
+      productId: product.id,
+      warehouseId: warehouse.id,
+      minStock: minStock === '' ? null : Number(minStock),
+      maxStock: maxStock === '' ? null : Number(maxStock),
+      location: location.trim() === '' ? null : location.trim(),
+    });
+    setBusy(false);
+    if (!res.ok) {
+      setError(res.error.kind === 'validation' ? res.error.message : 'Error al guardar');
+      return;
+    }
+    showToast({ title: 'Guardado', variant: 'success' });
+    onClose();
+  };
+
+  return (
+    <Sheet open onOpenChange={(o) => !o && onClose()} title={`${warehouse.name}`} description={product.name}>
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <Input
+            label="Stock mínimo"
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            value={minStock}
+            onChange={(e) => setMinStock(e.target.value)}
+            placeholder="Sin alerta"
+            hint="Alerta en el dashboard cuando el stock baja de aquí."
+          />
+          <Input
+            label="Stock máximo"
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            value={maxStock}
+            onChange={(e) => setMaxStock(e.target.value)}
+            placeholder="Sin alerta"
+          />
+        </div>
+        <Input
+          label="Ubicación interna"
+          value={location}
+          onChange={(e) => setLocation(e.target.value)}
+          placeholder="P. ej. Pasillo 3, Estante B"
+        />
+
+        {error && <div className="rounded bg-danger/10 p-2 text-sm text-danger">{error}</div>}
+
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="secondary" onClick={onClose} disabled={busy}>
+            Cancelar
+          </Button>
+          <Button onClick={submit} loading={busy}>
+            Guardar
+          </Button>
+        </div>
+      </div>
+    </Sheet>
   );
 }

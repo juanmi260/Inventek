@@ -4,10 +4,12 @@ import { db } from '@/data/db';
 import { Button } from '@/ui/Button';
 import { Input, Textarea } from '@/ui/Input';
 import { PageHeader } from '@/ui/PageHeader';
+import { BlobImage } from '@/ui/BlobImage';
 import { showToast } from '@/ui/Toast';
 import { createProduct, updateProduct } from '@/domain/use-cases/createProduct';
+import { compressImage } from '@/platform/image';
 import type { Product } from '@/domain/entities';
-import { X } from 'lucide-react';
+import { X, Camera, ImagePlus } from 'lucide-react';
 
 export default function ProductEditPage() {
   const { id } = useParams<{ id?: string }>();
@@ -24,6 +26,7 @@ export default function ProductEditPage() {
   const [newBarcode, setNewBarcode] = useState('');
   const [costPrice, setCostPrice] = useState('');
   const [salePrice, setSalePrice] = useState('');
+  const [imageBlob, setImageBlob] = useState<Blob | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -44,6 +47,7 @@ export default function ProductEditPage() {
       setBarcodes(p.barcodes);
       setCostPrice(p.costPrice?.toString() ?? '');
       setSalePrice(p.salePrice?.toString() ?? '');
+      setImageBlob(p.imageBlob);
       setLoaded(true);
     });
     return () => {
@@ -72,6 +76,7 @@ export default function ProductEditPage() {
       costPrice: costPrice ? Number(costPrice) : undefined,
       salePrice: salePrice ? Number(salePrice) : undefined,
       active: true,
+      imageBlob,
     };
     const res = editing
       ? await updateProduct(id!, payload)
@@ -105,6 +110,7 @@ export default function ProductEditPage() {
       <PageHeader title={editing ? 'Editar producto' : 'Nuevo producto'} back="/products" />
 
       <div className="space-y-3 px-3">
+        <ImageField imageBlob={imageBlob} onChange={setImageBlob} />
         <Input label="SKU" required value={sku} onChange={(e) => setSku(e.target.value)} maxLength={64} />
         <Input label="Nombre" required value={name} onChange={(e) => setName(e.target.value)} />
         <Textarea
@@ -194,5 +200,87 @@ export default function ProductEditPage() {
         </div>
       </div>
     </>
+  );
+}
+
+function ImageField({
+  imageBlob,
+  onChange,
+}: {
+  imageBlob: Blob | undefined;
+  onChange: (b: Blob | undefined) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  const pickImage = (capture: boolean) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    if (capture) input.setAttribute('capture', 'environment');
+    input.style.display = 'none';
+    input.onchange = async () => {
+      const f = input.files?.[0];
+      if (!f) return;
+      setBusy(true);
+      try {
+        const compressed = await compressImage(f, { maxSize: 800, quality: 0.8 });
+        onChange(compressed);
+      } catch (e) {
+        showToast({ title: 'No se ha podido procesar la imagen', description: String(e), variant: 'danger' });
+      } finally {
+        setBusy(false);
+      }
+    };
+    document.body.appendChild(input);
+    input.click();
+    input.remove();
+  };
+
+  return (
+    <div>
+      <span className="mb-1 block text-sm font-medium">Imagen</span>
+      <div className="flex items-center gap-3">
+        <div className="flex h-20 w-20 flex-shrink-0 items-center justify-center overflow-hidden rounded border border-border bg-surface">
+          {imageBlob ? (
+            <BlobImage blob={imageBlob} alt="Producto" className="h-full w-full object-cover" />
+          ) : (
+            <ImagePlus size={24} className="text-muted" aria-hidden />
+          )}
+        </div>
+        <div className="flex flex-1 flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            iconStart={<Camera size={16} />}
+            onClick={() => pickImage(true)}
+            loading={busy}
+          >
+            Cámara
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            iconStart={<ImagePlus size={16} />}
+            onClick={() => pickImage(false)}
+            loading={busy}
+          >
+            Galería
+          </Button>
+          {imageBlob && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              iconStart={<X size={16} />}
+              onClick={() => onChange(undefined)}
+            >
+              Quitar
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }

@@ -41,6 +41,7 @@ export async function createProduct(input: ProductInput): Promise<Result<Product
         salePrice: data.salePrice,
         taxRate: data.taxRate,
         active: data.active,
+        imageBlob: data.imageBlob as Blob | undefined,
         createdAt: now,
         updatedAt: now,
       };

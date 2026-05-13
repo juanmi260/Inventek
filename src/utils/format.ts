@@ -1,12 +1,20 @@
-export function formatNumber(n: number, locale = navigator.language): string {
+function defaultLocale(): string {
+  return typeof navigator !== 'undefined' ? navigator.language : 'es-ES';
+}
+
+export function formatNumber(n: number, locale = defaultLocale()): string {
   return new Intl.NumberFormat(locale, { maximumFractionDigits: 3 }).format(n);
 }
 
-export function formatMoney(n: number, currency = 'EUR', locale = navigator.language): string {
-  return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(n);
+export function formatMoney(n: number, currency = 'EUR', locale = defaultLocale()): string {
+  try {
+    return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(n);
+  } catch {
+    return `${formatNumber(n, locale)} ${currency}`;
+  }
 }
 
-export function formatDate(iso: string, locale = navigator.language): string {
+export function formatDate(iso: string, locale = defaultLocale()): string {
   const d = new Date(iso);
   return d.toLocaleString(locale, {
     year: 'numeric',
@@ -14,6 +22,15 @@ export function formatDate(iso: string, locale = navigator.language): string {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+  });
+}
+
+export function formatDateOnly(iso: string, locale = defaultLocale()): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString(locale, {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
   });
 }
 

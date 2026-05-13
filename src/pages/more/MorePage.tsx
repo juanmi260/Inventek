@@ -1,10 +1,11 @@
 import { Link } from 'react-router-dom';
 import { PageHeader } from '@/ui/PageHeader';
-import { Warehouse, Settings, Download, ChevronRight, ScanLine } from 'lucide-react';
+import { Warehouse, Settings, Download, ChevronRight, ScanLine, BarChart3 } from 'lucide-react';
 
 const ITEMS = [
   { to: '/warehouses', label: 'Almacenes', icon: Warehouse },
   { to: '/scan', label: 'Escáner', icon: ScanLine },
+  { to: '/reports', label: 'Reportes', icon: BarChart3 },
   { to: '/more/backup', label: 'Backup / restaurar', icon: Download },
   { to: '/more/settings', label: 'Ajustes', icon: Settings },
 ];
