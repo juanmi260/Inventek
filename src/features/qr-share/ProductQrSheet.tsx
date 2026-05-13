@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { Sheet } from '@/ui/Sheet';
 import { encodeProductPayload, renderQrDataUrl } from '@/platform/qr';
 import type { Product } from '@/domain/entities';
-/* eslint-disable @typescript-eslint/no-unused-vars */
 
 /**
  * Renders a sharable QR for a product. The payload is the product entity

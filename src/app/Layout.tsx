@@ -33,6 +33,12 @@ export function Layout() {
 
   return (
     <div className="flex min-h-dvh flex-col bg-bg">
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-40 focus:rounded focus:bg-primary focus:px-3 focus:py-2 focus:text-primary-fg"
+      >
+        Saltar al contenido
+      </a>
       <header className="safe-top sticky top-0 z-30 border-b border-border bg-bg/95 backdrop-blur">
         <div className="mx-auto flex max-w-3xl items-center gap-2 px-3 py-2">
           <button
@@ -63,7 +69,7 @@ export function Layout() {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-3xl flex-1 pb-24">
+      <main id="main" className="mx-auto w-full max-w-3xl flex-1 pb-24" tabIndex={-1}>
         <Suspense fallback={<RouteLoader />}>
           <Outlet />
         </Suspense>

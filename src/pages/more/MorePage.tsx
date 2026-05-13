@@ -11,6 +11,7 @@ import {
   Smartphone,
   Shield,
   Activity,
+  Info,
 } from 'lucide-react';
 
 const ITEMS = [
@@ -23,6 +24,7 @@ const ITEMS = [
   { to: '/more/security', label: 'Seguridad', icon: Shield },
   { to: '/more/health', label: 'Salud de los datos', icon: Activity },
   { to: '/more/settings', label: 'Ajustes', icon: Settings },
+  { to: '/more/about', label: 'Acerca de', icon: Info },
 ];
 
 export default function MorePage() {
