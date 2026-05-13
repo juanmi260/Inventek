@@ -101,7 +101,7 @@ export interface StockCount extends Timestamps {
   filter?: { categoryIds?: ULID[]; productIds?: ULID[] };
   expectedSnapshot: Array<{ productId: ULID; expected: number }>;
   countedLines: Array<{ productId: ULID; counted: number; countedAt: ISO }>;
-  adjustmentMovementId?: ULID;
+  adjustmentMovementIds?: ULID[];
   notes?: string;
 }
 

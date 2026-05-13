@@ -2,44 +2,44 @@
 
 Plan en fases con hitos medibles. Cada fase termina con una versión instalable y demostrable.
 
-## Fase 0 · Esqueleto (Semana 1)
+## Fase 0 · Esqueleto (Semana 1) — ✅ completada
 
 **Objetivo:** una app vacía instalable que ya es PWA.
 
-- [ ] Inicializar repo con Vite + React + TS + Tailwind.
-- [ ] Configurar ESLint + Prettier + husky + lint-staged + Vitest.
-- [ ] vite-plugin-pwa con manifest e iconos placeholder.
-- [ ] Service Worker funcionando offline (app shell).
-- [ ] Pantalla "Hola mundo" instalable, supera auditoría PWA de Lighthouse.
-- [ ] CI mínima (lint + tests) en GitHub Actions.
+- [x] Inicializar repo con Vite + React + TS + Tailwind.
+- [x] Configurar ESLint + Prettier + Vitest. _(husky + lint-staged pendiente, opcional)_
+- [x] vite-plugin-pwa con manifest e iconos generados desde SVG con sharp.
+- [x] Service Worker funcionando offline (app shell).
+- [x] PWA instalable verificada en Android y en iPhone.
+- [x] CD a GitHub Pages en cada push a `main`. _(workflow de lint+tests previo al deploy aún por añadir)_
 
 **Done cuando:** se puede instalar la app en un Android y abre offline.
 
-## Fase 1 · MVP usable (Semanas 2–4)
+## Fase 1 · MVP usable (Semanas 2–4) — ✅ completada
 
 **Objetivo:** registrar producto, escanear y mover stock.
 
-- [ ] Esquema Dexie v1 con productos, almacenes, stock_levels, movements.
-- [ ] Repositorios + casos de uso (`CreateProduct`, `CreateMovement`, `TransferStock`).
-- [ ] Pantallas: dashboard, lista de productos, ficha de producto, lista de almacenes, escáner, nuevo movimiento.
-- [ ] Lector de cámara con @zxing/browser.
-- [ ] Export/import JSON.
-- [ ] i18n es/en.
+- [x] Esquema Dexie v1 con productos, almacenes, stock_levels, movements (11 tablas).
+- [x] Repositorios + casos de uso (createProduct, createWarehouse, createMovement con transferencia atómica, rebuildStockLevels).
+- [x] Pantallas: dashboard, lista de productos, ficha de producto, lista de almacenes, escáner, nuevo movimiento.
+- [x] Lector de cámara con @zxing/browser (con flujo iOS-friendly tap-to-start).
+- [x] Export/import JSON con detección automática de gzip y modos fusionar/reemplazar.
+- [ ] i18n es/en. _(strings actualmente hardcoded en ES; el sistema i18n no está montado)_
 
 **Done cuando:** un usuario con un almacén y 50 productos puede operar un día de trabajo completo sin pegas en un Android de gama media.
 
-## Fase 2 · Producción ligera (Semanas 5–7)
+## Fase 2 · Producción ligera (Semanas 5–7) — 🟡 parcial
 
 **Objetivo:** lo que un usuario realista pediría en su primera semana.
 
-- [ ] Multi-código de barras por producto.
-- [ ] Imágenes de producto.
-- [ ] Stock mínimo/máximo + alertas en dashboard.
-- [ ] Histórico de movimientos con filtros y virtualización.
+- [x] Multi-código de barras por producto.
+- [ ] Imágenes de producto. _(la entidad ya admite `imageBlob`, falta UI de captura/visualización)_
+- [ ] Stock mínimo/máximo + alertas en dashboard. _(las alertas se muestran si los valores existen, pero falta UI para fijar mín/máx por producto-almacén)_
+- [ ] Histórico de movimientos con filtros y virtualización. _(listado plano OK; faltan filtros tipo chip y virtualización)_
 - [ ] Reportes básicos (stock, valoración).
-- [ ] Export CSV / XLSX (SheetJS).
-- [ ] Auto-backup en OPFS con retención.
-- [ ] Pantalla de configuración completa.
+- [ ] Export CSV / XLSX (SheetJS). _(libs instaladas, sin código)_
+- [x] Auto-backup en OPFS con retención (14 últimos).
+- [ ] Pantalla de configuración completa. _(hay tema, persistencia y borrado; faltan moneda, formato de fecha, sonidos)_
 
 **Done cuando:** se puede usar como única herramienta para una tienda pequeña con 500 productos.
 
@@ -55,7 +55,7 @@ Plan en fases con hitos medibles. Cada fase termina con una versión instalable 
 
 **Done cuando:** dos móviles intercambian un día entero de movimientos sin perder datos ni duplicar.
 
-## Fase 4 · Recuentos y operación rápida (Semanas 10–11)
+## Fase 4 · Recuentos y operación rápida (Semanas 10–11) — 🚧 en curso
 
 **Objetivo:** la app es excelente para inventarios físicos.
 
@@ -68,13 +68,13 @@ Plan en fases con hitos medibles. Cada fase termina con una versión instalable 
 
 **Done cuando:** un recuento de 500 productos en estanterías se hace en menos de 1 hora con un solo operario.
 
-## Fase 5 · Seguridad y resiliencia (Semana 12)
+## Fase 5 · Seguridad y resiliencia (Semana 12) — 🟡 parcial
 
 - [ ] PIN de apertura.
 - [ ] Backup cifrado con contraseña.
 - [ ] Bloqueo por inactividad.
-- [ ] Pantalla "salud de los datos" (espacio, integridad, último backup).
-- [ ] Reconstrucción de `stock_levels` desde movimientos.
+- [ ] Pantalla "salud de los datos" (espacio, integridad, último backup). _(la sección "Almacenamiento" en Ajustes muestra cuota/uso/persistencia; falta integridad y último backup)_
+- [x] Reconstrucción de `stock_levels` desde movimientos. _(use case `rebuildStockLevels` + acción "Reconstruir stock" en Backup)_
 
 ## Fase 6 · Pulido + 1.0 (Semana 13)
 
