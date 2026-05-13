@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { startScanner, hapticTap, type ScannerControls } from '@/platform/scanner';
+import { beep } from '@/platform/sound';
+import { useSettings } from '@/state/settings';
 import { Button } from '@/ui/Button';
 import { Camera } from 'lucide-react';
 
@@ -19,11 +21,14 @@ export function Scanner({ onDetected, paused, cooldownMs = 1500 }: ScannerProps)
   const controlsRef = useRef<ScannerControls | null>(null);
   const lastDetectedAt = useRef<number>(0);
   const lastCode = useRef<string>('');
+  const { settings } = useSettings();
 
   const onDetectedRef = useRef(onDetected);
   onDetectedRef.current = onDetected;
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
 
   const [running, setRunning] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -42,7 +47,8 @@ export function Scanner({ onDetected, paused, cooldownMs = 1500 }: ScannerProps)
           if (text === lastCode.current && now - lastDetectedAt.current < cooldownMs) return;
           lastCode.current = text;
           lastDetectedAt.current = now;
-          hapticTap();
+          if (settingsRef.current.scanVibrationEnabled) hapticTap();
+          if (settingsRef.current.scanSoundEnabled) beep();
           onDetectedRef.current(text);
         },
         {

@@ -131,6 +131,10 @@ export async function getCameraPermissionState(): Promise<'granted' | 'denied' |
 
 export function hapticTap(durationMs = 15) {
   if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
-    navigator.vibrate(durationMs);
+    try {
+      navigator.vibrate(durationMs);
+    } catch {
+      // ignore (iOS doesn't support vibration but throws on some versions)
+    }
   }
 }

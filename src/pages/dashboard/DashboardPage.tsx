@@ -10,6 +10,7 @@ import {
   ArrowUpFromLine,
   ArrowRightLeft,
   AlertTriangle,
+  ClipboardList,
   Plus,
 } from 'lucide-react';
 import { useActiveWarehouse } from '@/state/active-warehouse';
@@ -29,6 +30,19 @@ export default function DashboardPage() {
     },
     [],
     { productCount: 0, movementCount: 0 },
+  );
+
+  const openCount = useLiveQuery(
+    async () => {
+      if (!active) return undefined;
+      const open = await db.stockCounts
+        .where('warehouseId')
+        .equals(active.id)
+        .filter((c) => c.status === 'open')
+        .first();
+      return open;
+    },
+    [active?.id],
   );
 
   const lowStock = useLiveQuery(
@@ -74,6 +88,26 @@ export default function DashboardPage() {
           to="/movements"
         />
       </section>
+
+      {openCount && (
+        <section className="px-3 pt-4">
+          <Link
+            to={`/counts/${openCount.id}`}
+            className="flex items-center gap-3 rounded border border-primary/40 bg-primary/5 p-3"
+          >
+            <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded bg-primary/15 text-primary">
+              <ClipboardList size={20} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="truncate font-medium">Recuento en curso</div>
+              <div className="text-xs text-muted">
+                {openCount.countedLines.length}/{openCount.expectedSnapshot.length} productos contados
+              </div>
+            </div>
+            <span className="text-xs font-medium text-primary">Continuar →</span>
+          </Link>
+        </section>
+      )}
 
       <section className="px-3 pt-4">
         <h2 className="px-1 pb-2 text-sm font-semibold uppercase tracking-wide text-muted">

@@ -55,16 +55,16 @@ Plan en fases con hitos medibles. Cada fase termina con una versión instalable 
 
 **Done cuando:** dos móviles intercambian un día entero de movimientos sin perder datos ni duplicar.
 
-## Fase 4 · Recuentos y operación rápida (Semanas 10–11) — 🚧 en curso
+## Fase 4 · Recuentos y operación rápida (Semanas 10–11) — ✅ completada
 
 **Objetivo:** la app es excelente para inventarios físicos.
 
-- [ ] Recuentos con modo escaneo continuo.
-- [ ] Pausa/reanudación.
-- [ ] Cierre con movimiento de ajuste automático.
-- [ ] Modo "operación rápida" (pantalla grande con escáner permanente).
-- [ ] Wake Lock durante recuentos.
-- [ ] Sonidos y vibración configurables.
+- [x] Recuentos con modo escaneo continuo (tab "Escanear" en CountDetailPage).
+- [x] Pausa/reanudación (un recuento abierto sigue vivo entre sesiones; se ve un tile en el dashboard para continuar).
+- [x] Cierre con movimiento de ajuste automático (closeStockCount genera 'in'/'out' según diff; cancelStockCount no toca stock).
+- [x] Modo "operación rápida" — escáner full-height con bottom bar de último escaneado y +/-.
+- [x] Wake Lock durante recuentos (Screen Wake Lock API; degradación silenciosa en navegadores que no lo soporten).
+- [x] Sonidos y vibración configurables (settings.scanSound/Vibration, beep con WebAudio + Vibration API).
 
 **Done cuando:** un recuento de 500 productos en estanterías se hace en menos de 1 hora con un solo operario.
 
