@@ -7,9 +7,22 @@ import { showToast } from '@/ui/Toast';
 import { useActiveWarehouse } from '@/state/active-warehouse';
 import { productRepo, stockLevelRepo } from '@/data/repositories';
 import { createMovement } from '@/domain/use-cases/createMovement';
+import { createProduct } from '@/domain/use-cases/createProduct';
+import { parsePayload } from '@/platform/qr';
 import type { Product } from '@/domain/entities';
 import { formatNumber } from '@/utils/format';
 import { Minus, Plus } from 'lucide-react';
+
+interface IncomingProduct {
+  sku: string;
+  name: string;
+  description?: string;
+  unit: string;
+  barcodes: string[];
+  costPrice?: number;
+  salePrice?: number;
+  taxRate?: number;
+}
 
 export default function ScanPage() {
   const navigate = useNavigate();
@@ -20,12 +33,26 @@ export default function ScanPage() {
     stock: number;
   } | null>(null);
   const [unknown, setUnknown] = useState<string | null>(null);
+  const [incoming, setIncoming] = useState<IncomingProduct | null>(null);
   const [qty, setQty] = useState<number>(1);
   const [busy, setBusy] = useState(false);
 
   const handleDetected = useCallback(
     async (code: string) => {
-      if (found || unknown) return;
+      if (found || unknown || incoming) return;
+
+      // First, see if it's an Inventek-specific payload.
+      const parsed = parsePayload(code);
+      if (parsed.kind === 'product') {
+        setIncoming(parsed.data as IncomingProduct);
+        return;
+      }
+      if (parsed.kind === 'peer') {
+        navigate(`/sync?peer=${encodeURIComponent(parsed.peerId)}`);
+        return;
+      }
+
+      // Otherwise, treat as a regular product barcode lookup.
       const product = await productRepo.findByBarcode(code);
       if (!product) {
         setUnknown(code);
@@ -35,12 +62,13 @@ export default function ScanPage() {
       setFound({ product, code, stock: lvl?.quantity ?? 0 });
       setQty(1);
     },
-    [active, found, unknown],
+    [active, found, unknown, incoming, navigate],
   );
 
   const close = () => {
     setFound(null);
     setUnknown(null);
+    setIncoming(null);
   };
 
   const apply = async (type: 'in' | 'out') => {
@@ -49,7 +77,7 @@ export default function ScanPage() {
     const res = await createMovement({
       type,
       warehouseId: active.id,
-      reason: type === 'in' ? 'manual' : 'manual',
+      reason: 'manual',
       lines: [{ productId: found.product.id, quantity: qty }],
     });
     setBusy(false);
@@ -69,9 +97,36 @@ export default function ScanPage() {
     close();
   };
 
+  const importIncoming = async () => {
+    if (!incoming) return;
+    setBusy(true);
+    const res = await createProduct({
+      sku: incoming.sku,
+      name: incoming.name,
+      description: incoming.description,
+      unit: incoming.unit ?? 'unit',
+      barcodes: incoming.barcodes ?? [],
+      costPrice: incoming.costPrice,
+      salePrice: incoming.salePrice,
+      taxRate: incoming.taxRate,
+      active: true,
+    });
+    setBusy(false);
+    if (!res.ok) {
+      if (res.error.kind === 'conflict') {
+        showToast({ title: 'Ya existía', description: res.error.message, variant: 'warning' });
+      } else {
+        showToast({ title: 'No se pudo importar', variant: 'danger' });
+      }
+      return;
+    }
+    showToast({ title: 'Producto importado', variant: 'success' });
+    close();
+  };
+
   return (
     <div className="fixed inset-0 z-10 bg-black">
-      <Scanner onDetected={handleDetected} paused={!!found || !!unknown} />
+      <Scanner onDetected={handleDetected} paused={!!found || !!unknown || !!incoming} />
       <div className="safe-top absolute inset-x-0 top-0 flex items-center justify-between p-3">
         <Button variant="secondary" onClick={() => navigate(-1)}>
           Salir
@@ -149,6 +204,42 @@ export default function ScanPage() {
                 onClick={() => navigate(`/products/new?barcode=${encodeURIComponent(unknown)}`)}
               >
                 Dar de alta
+              </Button>
+            </div>
+          </div>
+        )}
+      </Sheet>
+
+      <Sheet
+        open={!!incoming}
+        onOpenChange={(o) => !o && close()}
+        title="Importar producto"
+        description="Recibido por QR"
+      >
+        {incoming && (
+          <div className="space-y-3">
+            <div className="rounded bg-surface p-3 text-sm">
+              <div className="font-medium">{incoming.name}</div>
+              <div className="mt-1 text-xs text-muted">SKU {incoming.sku}</div>
+              {incoming.barcodes.length > 0 && (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {incoming.barcodes.map((b) => (
+                    <span key={b} className="rounded bg-surface2 px-1.5 py-0.5 font-mono text-[10px]">
+                      {b}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {incoming.description && (
+                <p className="mt-2 text-xs text-muted">{incoming.description}</p>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={close} className="flex-1">
+                Cancelar
+              </Button>
+              <Button onClick={importIncoming} loading={busy} className="flex-1">
+                Importar
               </Button>
             </div>
           </div>

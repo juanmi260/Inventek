@@ -1,12 +1,22 @@
 import { Link } from 'react-router-dom';
 import { PageHeader } from '@/ui/PageHeader';
-import { Warehouse, Settings, Download, ChevronRight, ScanLine, BarChart3, ClipboardList } from 'lucide-react';
+import {
+  Warehouse,
+  Settings,
+  Download,
+  ChevronRight,
+  ScanLine,
+  BarChart3,
+  ClipboardList,
+  Smartphone,
+} from 'lucide-react';
 
 const ITEMS = [
   { to: '/warehouses', label: 'Almacenes', icon: Warehouse },
   { to: '/counts', label: 'Recuentos', icon: ClipboardList },
   { to: '/scan', label: 'Escáner', icon: ScanLine },
   { to: '/reports', label: 'Reportes', icon: BarChart3 },
+  { to: '/sync', label: 'Sincronizar con otro dispositivo', icon: Smartphone },
   { to: '/more/backup', label: 'Backup / restaurar', icon: Download },
   { to: '/more/settings', label: 'Ajustes', icon: Settings },
 ];

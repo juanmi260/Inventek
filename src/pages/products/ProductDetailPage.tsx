@@ -11,7 +11,9 @@ import {
   ArrowRightLeft,
   Settings2,
   AlertTriangle,
+  QrCode,
 } from 'lucide-react';
+import { ProductQrSheet } from '@/features/qr-share/ProductQrSheet';
 import { formatNumber } from '@/utils/format';
 import { productRepo } from '@/data/repositories';
 import { showToast } from '@/ui/Toast';
@@ -27,6 +29,7 @@ export default function ProductDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [askDelete, setAskDelete] = useState(false);
+  const [shareQr, setShareQr] = useState(false);
   const [limitsFor, setLimitsFor] = useState<{ warehouse: Warehouse; level?: StockLevel } | null>(
     null,
   );
@@ -69,11 +72,21 @@ export default function ProductDetailPage() {
         title={product.name}
         back="/products"
         actions={
-          <Link to={`/products/${product.id}/edit`} aria-label="Editar">
-            <Button size="sm" variant="secondary" iconStart={<Pencil size={16} />}>
-              Editar
+          <div className="flex gap-1">
+            <Button
+              size="sm"
+              variant="secondary"
+              aria-label="Compartir QR"
+              onClick={() => setShareQr(true)}
+            >
+              <QrCode size={16} />
             </Button>
-          </Link>
+            <Link to={`/products/${product.id}/edit`} aria-label="Editar">
+              <Button size="sm" variant="secondary" iconStart={<Pencil size={16} />}>
+                Editar
+              </Button>
+            </Link>
+          </div>
         }
       />
 
@@ -210,6 +223,8 @@ export default function ProductDetailPage() {
           onClose={() => setLimitsFor(null)}
         />
       )}
+
+      <ProductQrSheet product={product} open={shareQr} onOpenChange={setShareQr} />
     </>
   );
 }
