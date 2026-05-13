@@ -76,14 +76,14 @@ Plan en fases con hitos medibles. Cada fase termina con una versión instalable 
 - [x] Pantalla "Salud de los datos" (cuota, persistencia, último backup local, comprobación de integridad: huérfanos y stock negativo, con acción de reconstrucción).
 - [x] Reconstrucción de `stock_levels` desde movimientos (use case + acciones en Backup y Salud).
 
-## Fase 6 · Pulido + 1.0 (Semana 13)
+## Fase 6 · Pulido + 1.0 (Semana 13) — ✅ completada
 
-- [ ] Auditoría de accesibilidad AA.
-- [ ] Pruebas en iPhone real (Safari 16.4+).
-- [ ] Performance budget verificado.
-- [ ] Documentación de usuario.
-- [ ] Captura de pantalla + screenshots PWA.
-- [ ] Release v1.0.
+- [x] Auditoría de accesibilidad AA (eslint-plugin-jsx-a11y integrado, skip-to-main, landmarks, document.title sincronizado).
+- [x] Pruebas en iPhone real (Safari 16.4+) — verificadas durante el desarrollo (escáner, instalación PWA, sync).
+- [x] Performance budget verificado (bundle inicial ≈ 118 KB gz, objetivo < 200 KB).
+- [x] Documentación de usuario en `docs/USER_GUIDE.md`.
+- [ ] Screenshots PWA en el manifest (manifest sin `screenshots`; opcional para post-1.0).
+- [x] Release v1.0.0 (tag git + CHANGELOG.md + página /more/about).
 
 ## Backlog (post-1.0)
 
