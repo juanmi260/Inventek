@@ -4,6 +4,7 @@ import { nowIso } from '@/utils/format';
 import { newId } from '@/utils/ulid';
 import pako from 'pako';
 import { getBackupStore, type BackupEntry } from './backupStore';
+import { decryptBlob, encryptBlob, isEncryptedBackup } from './crypto';
 
 export const BACKUP_SCHEMA = 'inventek/backup/v1';
 
@@ -105,20 +106,28 @@ export async function exportBackup(): Promise<BackupFile> {
   };
 }
 
-export async function exportBackupBlob(opts: { gzip?: boolean } = {}): Promise<{ blob: Blob; filename: string }> {
+export interface ExportOptions {
+  gzip?: boolean;
+  passphrase?: string;
+}
+
+export async function exportBackupBlob(
+  opts: ExportOptions = {},
+): Promise<{ blob: Blob; filename: string }> {
   const backup = await exportBackup();
   const json = JSON.stringify(backup);
   const stamp = backup.exportedAt.replace(/[:.]/g, '-');
-  if (opts.gzip ?? true) {
-    const gz = pako.gzip(json);
-    return {
-      blob: new Blob([gz], { type: 'application/gzip' }),
-      filename: `inventek-${stamp}.json.gz`,
-    };
+  const gzip = opts.gzip ?? true;
+  const inner = gzip
+    ? new Blob([pako.gzip(json)], { type: 'application/gzip' })
+    : new Blob([json], { type: 'application/json' });
+  if (opts.passphrase) {
+    const enc = await encryptBlob(inner, opts.passphrase);
+    return { blob: enc, filename: `inventek-${stamp}.inventek.enc` };
   }
   return {
-    blob: new Blob([json], { type: 'application/json' }),
-    filename: `inventek-${stamp}.json`,
+    blob: inner,
+    filename: gzip ? `inventek-${stamp}.json.gz` : `inventek-${stamp}.json`,
   };
 }
 
@@ -135,10 +144,23 @@ export interface ImportSummary {
   settings: number;
 }
 
-export async function readBackupFromBlob(blob: Blob): Promise<BackupFile> {
-  const buf = new Uint8Array(await blob.arrayBuffer());
+/**
+ * Returns true if the blob is an Inventek encrypted backup. Useful for the
+ * UI to know if it should prompt for a passphrase before reading.
+ */
+export { isEncryptedBackup };
+
+export async function readBackupFromBlob(
+  blob: Blob,
+  passphrase?: string,
+): Promise<BackupFile> {
+  let work = blob;
+  if (await isEncryptedBackup(work)) {
+    if (!passphrase) throw new Error('PASSPHRASE_REQUIRED');
+    work = await decryptBlob(work, passphrase);
+  }
+  const buf = new Uint8Array(await work.arrayBuffer());
   let text: string;
-  // Detect gzip magic bytes
   if (buf[0] === 0x1f && buf[1] === 0x8b) {
     text = pako.ungzip(buf, { to: 'string' });
   } else {

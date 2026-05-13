@@ -68,13 +68,13 @@ Plan en fases con hitos medibles. Cada fase termina con una versión instalable 
 
 **Done cuando:** un recuento de 500 productos en estanterías se hace en menos de 1 hora con un solo operario.
 
-## Fase 5 · Seguridad y resiliencia (Semana 12) — 🟡 parcial
+## Fase 5 · Seguridad y resiliencia (Semana 12) — ✅ completada
 
-- [ ] PIN de apertura.
-- [ ] Backup cifrado con contraseña.
-- [ ] Bloqueo por inactividad.
-- [ ] Pantalla "salud de los datos" (espacio, integridad, último backup). _(la sección "Almacenamiento" en Ajustes muestra cuota/uso/persistencia; falta integridad y último backup)_
-- [x] Reconstrucción de `stock_levels` desde movimientos. _(use case `rebuildStockLevels` + acción "Reconstruir stock" en Backup)_
+- [x] PIN de apertura (4-6 dígitos, hash PBKDF2-SHA-256 con 200k iteraciones).
+- [x] Backup cifrado con contraseña (AES-GCM 256, magic `INVK1ENC`, header con salt+IV).
+- [x] Bloqueo por inactividad (timer configurable: off/1/5/15/30/60 min + opción "bloquear al cerrar la app").
+- [x] Pantalla "Salud de los datos" (cuota, persistencia, último backup local, comprobación de integridad: huérfanos y stock negativo, con acción de reconstrucción).
+- [x] Reconstrucción de `stock_levels` desde movimientos (use case + acciones en Backup y Salud).
 
 ## Fase 6 · Pulido + 1.0 (Semana 13)
 

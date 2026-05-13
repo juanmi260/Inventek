@@ -9,6 +9,8 @@ import {
   BarChart3,
   ClipboardList,
   Smartphone,
+  Shield,
+  Activity,
 } from 'lucide-react';
 
 const ITEMS = [
@@ -18,6 +20,8 @@ const ITEMS = [
   { to: '/reports', label: 'Reportes', icon: BarChart3 },
   { to: '/sync', label: 'Sincronizar con otro dispositivo', icon: Smartphone },
   { to: '/more/backup', label: 'Backup / restaurar', icon: Download },
+  { to: '/more/security', label: 'Seguridad', icon: Shield },
+  { to: '/more/health', label: 'Salud de los datos', icon: Activity },
   { to: '/more/settings', label: 'Ajustes', icon: Settings },
 ];
 

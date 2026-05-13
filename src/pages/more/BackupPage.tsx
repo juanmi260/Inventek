@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
 import { PageHeader } from '@/ui/PageHeader';
 import { Button } from '@/ui/Button';
-import { Download, Upload, RotateCcw, FolderArchive, Share2, Trash2 } from 'lucide-react';
+import { Download, Upload, RotateCcw, FolderArchive, Share2, Trash2, Lock } from 'lucide-react';
 import { showToast } from '@/ui/Toast';
 import { ConfirmDialog } from '@/ui/ConfirmDialog';
 import { Sheet } from '@/ui/Sheet';
+import { Input } from '@/ui/Input';
 import {
   exportBackupBlob,
   importBackup,
+  isEncryptedBackup,
   listLocalBackups,
   pruneLocalBackups,
   readBackupFromBlob,
@@ -32,6 +34,11 @@ export default function BackupPage() {
   const [backend, setBackend] = useState<{ backend: 'opfs' | 'idb'; label: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [pendingImport, setPendingImport] = useState<File | null>(null);
+  const [importPassphrase, setImportPassphrase] = useState('');
+  const [importEncrypted, setImportEncrypted] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [encryptOpen, setEncryptOpen] = useState(false);
+  const [exportPassphrase, setExportPassphrase] = useState('');
   const [rebuildOpen, setRebuildOpen] = useState(false);
   const [toDelete, setToDelete] = useState<LocalBackup | null>(null);
 
@@ -42,13 +49,18 @@ export default function BackupPage() {
 
   const refresh = async () => setItems(await listLocalBackups());
 
-  const doExport = async () => {
+  const doExport = async (passphrase?: string) => {
     setBusy(true);
     try {
-      const { blob, filename } = await exportBackupBlob({ gzip: true });
+      const { blob, filename } = await exportBackupBlob({ gzip: true, passphrase });
       const shared = await shareBlob(blob, filename);
       if (!shared) await saveBlob(blob, filename);
-      showToast({ title: 'Backup exportado', variant: 'success' });
+      showToast({
+        title: passphrase ? 'Backup cifrado exportado' : 'Backup exportado',
+        variant: 'success',
+      });
+      setEncryptOpen(false);
+      setExportPassphrase('');
     } catch (e) {
       showToast({ title: 'Error al exportar', description: String(e), variant: 'danger' });
     } finally {
@@ -97,16 +109,24 @@ export default function BackupPage() {
   };
 
   const triggerImport = async () => {
-    const f = await pickFile();
-    if (f) setPendingImport(f);
+    const f = await pickFile('.json,.gz,.json.gz,.enc,.inventek.enc');
+    if (!f) return;
+    setImportError(null);
+    setImportPassphrase('');
+    setImportEncrypted(await isEncryptedBackup(f));
+    setPendingImport(f);
   };
 
   const applyImport = async (mode: 'merge' | 'replace') => {
     if (!pendingImport) return;
     setBusy(true);
+    setImportError(null);
     try {
       await saveBackupLocal();
-      const backup = await readBackupFromBlob(pendingImport);
+      const backup = await readBackupFromBlob(
+        pendingImport,
+        importEncrypted ? importPassphrase : undefined,
+      );
       const summary = await importBackup(backup, mode);
       const total = Object.values(summary).reduce((a, b) => a + b, 0);
       showToast({
@@ -115,9 +135,16 @@ export default function BackupPage() {
         variant: 'success',
       });
       setPendingImport(null);
+      setImportPassphrase('');
       await refresh();
     } catch (e) {
-      showToast({ title: 'Error al importar', description: String(e), variant: 'danger' });
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg === 'PASSPHRASE_REQUIRED') {
+        setImportEncrypted(true);
+        setImportError('Este backup está cifrado. Introduce la contraseña.');
+      } else {
+        setImportError(msg);
+      }
     } finally {
       setBusy(false);
     }
@@ -133,8 +160,15 @@ export default function BackupPage() {
             Genera un fichero <code>.json.gz</code> con todos tus datos. Puedes guardarlo o compartirlo.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
-            <Button onClick={doExport} loading={busy} iconStart={<Download size={18} />}>
+            <Button onClick={() => void doExport()} loading={busy} iconStart={<Download size={18} />}>
               Exportar todo
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => setEncryptOpen(true)}
+              iconStart={<Lock size={18} />}
+            >
+              Exportar cifrado…
             </Button>
             <Button
               variant="secondary"
@@ -218,13 +252,37 @@ export default function BackupPage() {
 
       <Sheet
         open={!!pendingImport}
-        onOpenChange={(o) => !o && setPendingImport(null)}
+        onOpenChange={(o) => {
+          if (!o) {
+            setPendingImport(null);
+            setImportPassphrase('');
+            setImportError(null);
+          }
+        }}
         title="Importar backup"
         description={pendingImport?.name}
       >
         <div className="space-y-3">
+          {importEncrypted && (
+            <Input
+              label="Contraseña del backup"
+              type="password"
+              autoFocus
+              value={importPassphrase}
+              onChange={(e) => setImportPassphrase(e.target.value)}
+              placeholder="Introduce la contraseña con la que se cifró"
+            />
+          )}
+          {importError && (
+            <div className="rounded bg-danger/10 p-2 text-sm text-danger">{importError}</div>
+          )}
           <p className="text-sm text-muted">¿Cómo quieres aplicar los datos del fichero?</p>
-          <Button className="w-full" onClick={() => applyImport('merge')} loading={busy}>
+          <Button
+            className="w-full"
+            onClick={() => applyImport('merge')}
+            loading={busy}
+            disabled={importEncrypted && !importPassphrase}
+          >
             Fusionar con los datos actuales
           </Button>
           <Button
@@ -232,12 +290,42 @@ export default function BackupPage() {
             className="w-full"
             onClick={() => applyImport('replace')}
             loading={busy}
+            disabled={importEncrypted && !importPassphrase}
           >
             Reemplazar TODO
           </Button>
           <p className="text-xs text-muted">
             En ambos modos se guarda un backup local antes de aplicar los cambios.
           </p>
+        </div>
+      </Sheet>
+
+      <Sheet open={encryptOpen} onOpenChange={setEncryptOpen} title="Exportar cifrado">
+        <div className="space-y-3">
+          <p className="text-sm text-muted">
+            El backup se cifrará con AES-GCM 256 derivando la clave por PBKDF2 de la contraseña
+            que elijas. Si la pierdes, no se puede recuperar.
+          </p>
+          <Input
+            label="Contraseña"
+            type="password"
+            autoFocus
+            value={exportPassphrase}
+            onChange={(e) => setExportPassphrase(e.target.value)}
+          />
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="secondary" onClick={() => setEncryptOpen(false)} disabled={busy}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => void doExport(exportPassphrase)}
+              loading={busy}
+              disabled={exportPassphrase.length < 6}
+            >
+              Exportar cifrado
+            </Button>
+          </div>
+          <p className="text-xs text-muted">Mínimo 6 caracteres.</p>
         </div>
       </Sheet>
 
