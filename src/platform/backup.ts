@@ -3,6 +3,7 @@ import { getDeviceId } from './device';
 import { nowIso } from '@/utils/format';
 import { newId } from '@/utils/ulid';
 import pako from 'pako';
+import { getBackupStore, type BackupEntry } from './backupStore';
 
 export const BACKUP_SCHEMA = 'inventek/backup/v1';
 
@@ -217,56 +218,57 @@ export async function importBackup(
   );
 }
 
-export async function saveBackupToOpfs(): Promise<string | null> {
-  if (typeof navigator === 'undefined' || !navigator.storage?.getDirectory) return null;
+/**
+ * Saves a backup snapshot to local persistent storage. Uses OPFS where
+ * available (Chromium, Firefox, recent Safari desktop), falls back to a
+ * separate IndexedDB database (`inventek_backups`) on iOS Safari and
+ * environments without writable OPFS.
+ */
+export async function saveBackupLocal(): Promise<BackupEntry | null> {
   try {
     const { blob, filename } = await exportBackupBlob({ gzip: true });
-    const root = await navigator.storage.getDirectory();
-    const dir = await root.getDirectoryHandle('backups', { create: true });
-    const fh = await dir.getFileHandle(filename, { create: true });
-    const w = await fh.createWritable();
-    await w.write(blob);
-    await w.close();
-    return filename;
+    const store = await getBackupStore();
+    return await store.save(blob, filename);
   } catch {
     return null;
   }
 }
 
-export async function listOpfsBackups(): Promise<Array<{ name: string; size: number; mtime: number }>> {
-  if (typeof navigator === 'undefined' || !navigator.storage?.getDirectory) return [];
+export async function listLocalBackups(): Promise<BackupEntry[]> {
   try {
-    const root = await navigator.storage.getDirectory();
-    const dir = await root.getDirectoryHandle('backups', { create: false });
-    const items: Array<{ name: string; size: number; mtime: number }> = [];
-    // @ts-expect-error TS lib does not yet include .values()
-    for await (const entry of dir.values()) {
-      if (entry.kind === 'file') {
-        const file = await entry.getFile();
-        items.push({ name: entry.name, size: file.size, mtime: file.lastModified });
-      }
-    }
-    items.sort((a, b) => b.mtime - a.mtime);
-    return items;
+    const store = await getBackupStore();
+    return await store.list();
   } catch {
     return [];
   }
 }
 
-export async function pruneOpfsBackups(keep = 14): Promise<number> {
-  if (typeof navigator === 'undefined' || !navigator.storage?.getDirectory) return 0;
+export async function readLocalBackup(id: string): Promise<Blob | null> {
   try {
-    const root = await navigator.storage.getDirectory();
-    const dir = await root.getDirectoryHandle('backups', { create: false });
-    const items = await listOpfsBackups();
-    const toRemove = items.slice(keep);
-    for (const it of toRemove) {
-      await dir.removeEntry(it.name);
-    }
-    return toRemove.length;
+    const store = await getBackupStore();
+    return await store.read(id);
+  } catch {
+    return null;
+  }
+}
+
+export async function removeLocalBackup(id: string): Promise<void> {
+  const store = await getBackupStore();
+  await store.remove(id);
+}
+
+export async function pruneLocalBackups(keep = 14): Promise<number> {
+  try {
+    const store = await getBackupStore();
+    return await store.prune(keep);
   } catch {
     return 0;
   }
+}
+
+export async function clearLocalBackups(): Promise<void> {
+  const store = await getBackupStore();
+  await store.clear();
 }
 
 // Generates a fresh ULID-tagged id (used by callers that want a unique handle).
