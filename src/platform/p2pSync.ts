@@ -77,7 +77,7 @@ function attachProtocol(conn: DataConnection, emit: (e: SyncEvent) => void) {
   let sentCount = 0;
   let receivedCount = 0;
   let appliedCount = 0;
-  let receivedByEntity: Record<string, number> = {};
+  const receivedByEntity: Record<string, number> = {};
   let anyDataApplied = false;
 
   const tryFinish = async () => {

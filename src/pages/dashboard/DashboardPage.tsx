@@ -172,7 +172,7 @@ function SyncStatusTile() {
   let icon: React.ReactNode = <WifiOff size={20} />;
   let label = 'Sin conexión con el primario';
   let className = 'border-border';
-  let to = '/sync';
+  const to = '/sync';
   if (sync.isHost) {
     icon = <Crown size={20} className="text-warning" />;
     label = phase === 'waiting' ? 'Eres el primario · escuchando' : 'Eres el primario';
