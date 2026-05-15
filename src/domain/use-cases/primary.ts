@@ -4,6 +4,47 @@ import { getDeviceId } from '@/platform/device';
 import { stablePeerIdForDevice } from '@/platform/p2pSync';
 import { appendEvent, buildSettingEvent, fingerprint, fingerprintsMatch, type Fingerprint } from './syncEvents';
 
+const KNOWN_REPLICAS_KEY = 'sync.knownReplicas';
+const STALE_REPLICA_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+export interface KnownReplica {
+  deviceId: string;
+  peerId: string;
+  lastSeenAt: string;
+}
+
+export async function getKnownReplicas(): Promise<KnownReplica[]> {
+  const row = await db.settings.get(KNOWN_REPLICAS_KEY);
+  const all = ((row?.value as KnownReplica[] | undefined) ?? []).filter(
+    (r) => r.deviceId !== getDeviceId(),
+  );
+  const cutoff = Date.now() - STALE_REPLICA_MS;
+  return all.filter((r) => new Date(r.lastSeenAt).getTime() >= cutoff);
+}
+
+/**
+ * Records (or refreshes) a known replica so the primary can push to it when
+ * it makes local changes. Updates `lastSeenAt` if the entry exists.
+ */
+export async function rememberReplica(deviceId: string, peerId: string): Promise<void> {
+  if (deviceId === getDeviceId()) return;
+  const row = await db.settings.get(KNOWN_REPLICAS_KEY);
+  const existing = (row?.value as KnownReplica[] | undefined) ?? [];
+  const now = nowIso();
+  const filtered = existing.filter((r) => r.deviceId !== deviceId);
+  filtered.push({ deviceId, peerId, lastSeenAt: now });
+  await db.settings.put({ key: KNOWN_REPLICAS_KEY, value: filtered, updatedAt: now });
+}
+
+export async function forgetReplica(deviceId: string): Promise<void> {
+  const row = await db.settings.get(KNOWN_REPLICAS_KEY);
+  if (!row) return;
+  const filtered = ((row.value as KnownReplica[] | undefined) ?? []).filter(
+    (r) => r.deviceId !== deviceId,
+  );
+  await db.settings.put({ key: KNOWN_REPLICAS_KEY, value: filtered, updatedAt: nowIso() });
+}
+
 export interface PrimaryInfo {
   peerId: string;
   deviceId: string;

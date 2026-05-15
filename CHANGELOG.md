@@ -5,6 +5,32 @@ Todas las versiones notables de Inventek.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
 y este proyecto adhiere a [Semantic Versioning](https://semver.org/lang/es/).
 
+## [1.1.3] — 2026-05-15
+
+### Añadido
+- **Push del primario a las réplicas**: cuando el primario hace un
+  cambio local, el debounce de 2 s no solo se queda escuchando — itera
+  la lista de réplicas conocidas y empuja a cada una (sequencial). Las
+  réplicas que estén offline se saltan limpiamente con
+  `peer-unavailable`.
+- **Peer persistente**: cada dispositivo abre su Peer con peer-id
+  estable al lanzar la app y lo mantiene vivo hasta cerrarla. El mismo
+  Peer atiende incoming (push hacia él) y outgoing (sus pulls).
+- **`sync.knownReplicas` setting**: el primario persiste un registro
+  `{ deviceId, peerId, lastSeenAt }` por cada réplica que se ha
+  conectado al menos una vez. Entradas más viejas de 30 días se
+  descartan al leer.
+
+### Cambiado
+- `connectToHost` / `startHost` siguen disponibles pero la UI usa
+  ahora `createPeerManager()` y `attachProtocol(conn, emit)` por
+  separado: la sesión deja de ser un Peer one-shot.
+- `cancel()` ya no destruye el Peer; solo cierra la conexión
+  outgoing activa y resetea la UI.
+- Promover a primario ya no necesita reiniciar el Peer (`restartHost`
+  eliminado de la API) — el peer-id estable ya estaba activo desde
+  el lanzamiento de la app.
+
 ## [1.1.2] — 2026-05-15
 
 ### Añadido

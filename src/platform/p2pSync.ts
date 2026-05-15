@@ -67,7 +67,11 @@ function send(conn: DataConnection, msg: WireMsg) {
 
 // ─── Protocol state machine ───────────────────────────────────────────────
 
-function attachProtocol(conn: DataConnection, emit: (e: SyncEvent) => void) {
+/**
+ * Wires the bidirectional sync protocol onto an open DataConnection. Public
+ * so callers managing their own Peer (see `createPeerManager`) can reuse it.
+ */
+export function attachProtocol(conn: DataConnection, emit: (e: SyncEvent) => void) {
   let helloReceived = false;
   let peerWatermarks: Watermarks = {};
   let peerFingerprint: Fingerprint | null = null;
@@ -290,6 +294,104 @@ export function stablePeerIdForDevice(deviceId: string): string {
   // already qualify, so we just prefix.
   const clean = deviceId.replace(/[^a-zA-Z0-9]/g, '');
   return `inventek-${clean}`.slice(0, 64);
+}
+
+// ─── Peer manager (persistent Peer for both push and pull) ────────────────
+
+export type ManagerEvent =
+  | { type: 'ready'; peerId: string }
+  | { type: 'manager-error'; message: string }
+  | { type: 'incoming'; remotePeerId: string; conn: DataConnection };
+
+export interface PeerManager {
+  /** Stable peer-id we registered (or the broker-assigned one if non-stable). */
+  myPeerId: () => string | null;
+  /** True once the broker accepted our registration. */
+  ready: () => boolean;
+  /** Subscribe to manager events. Returns the unsubscribe fn. */
+  on: (cb: (e: ManagerEvent) => void) => () => void;
+  /**
+   * Opens an outgoing connection to `peerId`. The returned DataConnection
+   * emits 'open' once usable; attachProtocol() should be wired then.
+   */
+  connect: (peerId: string) => DataConnection;
+  destroy: () => void;
+}
+
+/**
+ * Creates a Peer that persists for the lifetime of the app. The same Peer is
+ * used to both accept incoming connections (for the host or any device a
+ * replica peer wants to push to) and to initiate outgoing ones.
+ *
+ * The PeerJS server (default public broker) accepts a custom id; if that id
+ * happens to be claimed by a stale registration, we retry once after a short
+ * delay before giving up.
+ */
+export function createPeerManager(stableId: string): PeerManager {
+  let peer: Peer | null = null;
+  let assignedId: string | null = null;
+  const listeners = new Set<(e: ManagerEvent) => void>();
+  const emit = (e: ManagerEvent) => listeners.forEach((cb) => cb(e));
+  let retried = false;
+
+  const start = () => {
+    peer = new Peer(stableId, { debug: 0 });
+    peer.on('open', (id) => {
+      assignedId = id;
+      emit({ type: 'ready', peerId: id });
+    });
+    peer.on('error', (err: Error & { type?: string }) => {
+      if (err.type === 'unavailable-id' && !retried) {
+        retried = true;
+        // The id may be claimed by our previous (now-dead) registration. Wait
+        // for the broker to expire it, then retry once.
+        try {
+          peer?.destroy();
+        } catch {
+          // ignore
+        }
+        setTimeout(start, 1500);
+        return;
+      }
+      emit({ type: 'manager-error', message: err.message ?? String(err) });
+    });
+    peer.on('disconnected', () => {
+      try {
+        peer?.reconnect();
+      } catch {
+        // ignore
+      }
+    });
+    peer.on('connection', (conn) => {
+      conn.on('open', () => {
+        emit({ type: 'incoming', remotePeerId: conn.peer, conn });
+      });
+    });
+  };
+
+  start();
+
+  return {
+    myPeerId: () => assignedId,
+    ready: () => assignedId !== null,
+    on: (cb) => {
+      listeners.add(cb);
+      return () => listeners.delete(cb);
+    },
+    connect: (peerId: string) => {
+      if (!peer) throw new Error('Peer not initialized');
+      return peer.connect(peerId, { reliable: true });
+    },
+    destroy: () => {
+      listeners.clear();
+      try {
+        peer?.destroy();
+      } catch {
+        // ignore
+      }
+      peer = null;
+    },
+  };
 }
 
 declare const __APP_VERSION__: string;

@@ -43,14 +43,17 @@ export default function SyncPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Render QR when we get a peer-id.
+  // Render QR for the local peer-id (visible whenever the listener is ready,
+  // not only during a host session). The Peer is persistent now, so the QR
+  // is meaningful at any time.
   useEffect(() => {
-    if (sync.progress.peerId) {
-      void renderQrDataUrl(encodePeerPayload(sync.progress.peerId), { width: 280 }).then(setQrUrl);
+    const pid = sync.myPeerId ?? sync.progress.peerId;
+    if (pid) {
+      void renderQrDataUrl(encodePeerPayload(pid), { width: 280 }).then(setQrUrl);
     } else {
       setQrUrl(null);
     }
-  }, [sync.progress.peerId]);
+  }, [sync.myPeerId, sync.progress.peerId]);
 
   // Deep link ?peer=... connects directly.
   useEffect(() => {
@@ -93,10 +96,8 @@ export default function SyncPage() {
   const doPromote = async () => {
     const info = await setSelfAsPrimary();
     await sync.refresh();
-    // Restart the local listener with the stable peer-id so replicas can find
-    // us straight away. Without this, the device would keep listening on the
-    // random peer-id from the first pairing.
-    await sync.restartHost();
+    // The persistent Peer was already created with our stable peer-id at app
+    // open — promotion only flips the role; no Peer restart is needed.
     showToast({ title: 'Eres el primario', description: info.peerId, variant: 'success' });
     setPromoteOpen(false);
   };
@@ -130,7 +131,7 @@ export default function SyncPage() {
                 icon={<QrCode size={24} />}
                 title={sync.isHost ? 'Modo primario · escuchando' : 'Mostrar mi código'}
                 description="Muestra un QR para que otro dispositivo lo escanee y se conecte."
-                onClick={sync.startHostMode}
+                onClick={sync.showQr}
               />
               <OptionCard
                 icon={<ScanLine size={24} />}

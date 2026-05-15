@@ -166,22 +166,31 @@ la app intenta sincronizar una vez automáticamente. Si tu dispositivo
 es **primario**, abre escucha en el broker para que las réplicas te
 encuentren.
 
-### Auto-sync tras cada cambio
+### Auto-sync tras cada cambio (en ambos sentidos)
 
-Cuando haces cualquier cambio en la réplica (un movimiento, alta,
-recuento…) Inventek **espera 2 segundos** y dispara una sincronización
-con el primario automáticamente. Si durante esos 2 segundos haces más
-cambios (típico al meter una entrada con varias líneas), el temporizador
-se reinicia y al final se manda todo en un único sync.
+Cuando haces cualquier cambio en cualquier dispositivo (un movimiento,
+alta, recuento, edición de mín/máx…) Inventek **espera 2 segundos** y
+dispara una sincronización automáticamente. Si durante esos 2 segundos
+haces más cambios (típico al meter una entrada con varias líneas), el
+temporizador se reinicia y al final se manda todo en un único sync.
 
-Es decir: una pequeña ráfaga de cambios viaja como un único paquete a
-los pocos segundos del último click, sin que tengas que tocar nada.
+- En la **réplica**: el cambio se propaga al primario.
+- En el **primario**: el cambio se empuja a **todas las réplicas
+  conocidas** (las que se han conectado al menos una vez en los
+  últimos 30 días). Las pushes se hacen una a una para no saturar el
+  broker.
 
-Limitación a tener clara: **los cambios hechos en el primario no se
-empujan automáticamente a las réplicas**. Para verlos en una réplica
-debes (a) hacer algún cambio tú en la réplica (lo que provocará un
-auto-sync que también arrastra lo del primario), (b) cerrar y reabrir
-la app de la réplica, o (c) tocar "Sincronizar ahora con el primario".
+Resultado práctico: una pequeña ráfaga de cambios viaja como un único
+paquete a los pocos segundos del último click, sin que tengas que tocar
+nada — sea cual sea el dispositivo donde editas.
+
+Limitaciones a tener claras:
+- Para que el push del primario funcione, **la réplica debe tener la
+  app abierta** (su Peer debe estar registrado en el broker). Si está
+  cerrada, el primario lo descubre por "peer-unavailable" y deja el
+  cambio para la próxima reconexión de esa réplica.
+- Cada dispositivo abre su Peer al lanzar la app y lo mantiene vivo
+  hasta cerrarla; mientras tanto cualquier otro puede llamarle.
 
 El estado se ve en el **tile de sincronización del dashboard**:
 

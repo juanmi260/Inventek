@@ -143,13 +143,21 @@ Setting compartido (entidad `setting`, key `sync.primary`):
 - Si el `sync.primary.deviceId` es el mío → soy primario → abro `startHost` con mi peer-id estable.
 - Si no → soy réplica → llamo `connectToHost(primary.peerId)` una vez.
 
-**Auto-sync debounced** (Fase 7.2):
+**Auto-sync debounced bidireccional** (Fase 7.2 + 7.3):
 
 Tras la primera conexión, la sesión se cierra. Para que cambios posteriores se propaguen sin pulsar nada, hay un hook Dexie sobre `syncEvents` que detecta inserciones con `deviceId === local` (descarta eventos aplicados desde un remoto) y programa una sincronización 2 segundos después. El temporizador se reinicia con cada nuevo evento, así que una ráfaga (p. ej. una entrada con varias líneas) genera un único sync al final.
 
 Si una sincronización ya está en marcha (`phase` ∈ {opening, connecting, connected, syncing}), el temporizador no dispara — se respeta la que esté en curso y el siguiente cambio reintentará.
 
-**Asimetría conocida**: los cambios hechos en el primario no se empujan a las réplicas. Las réplicas tiran (pull) en cuanto hacen su propio cambio, cuando reabren la app o cuando el usuario toca "Sincronizar ahora". Un push activo desde el primario requeriría que el primario recordara los peer-ids de las réplicas vistas y las llamara de vuelta — pendiente para una iteración posterior.
+**Peer persistente y push del primario** (Fase 7.3):
+
+Cada dispositivo abre su Peer (PeerJS) con su peer-id estable (`inventek-<deviceId>`) **al lanzar la app y lo mantiene vivo** hasta que se cierra. El mismo Peer sirve tanto para iniciar conexiones (pull desde una réplica al primario) como para aceptarlas (push del primario a una réplica).
+
+- Cuando una réplica conecta al primario, el primario aprende su `deviceId` (en el `hello`) y su `peerId` (en `conn.peer`). Lo persiste en `sync.knownReplicas` (lista de `{ deviceId, peerId, lastSeenAt }`). Entradas más antiguas de 30 días se descartan al leer.
+- Cuando el primario hace un cambio local, el debounce dispara `syncWithPrimary` → detecta `isPrimary` → itera `getKnownReplicas` y llama `peer.connect(replica.peerId)` **secuencialmente**, ejecutando el mismo protocolo de delta sync.
+- Si una réplica está offline, el primario recibe `peer-unavailable` y pasa a la siguiente. No bloquea. Esa réplica recibirá los cambios al volver a conectar (auto-pair o auto-sync).
+
+La autoreconexión al broker (`peer.on('disconnected') → peer.reconnect()`) se mantiene; si la WebSocket cae, el Peer la restaura sin perder su id estable.
 
 ### Convergencia con 3+ dispositivos
 
