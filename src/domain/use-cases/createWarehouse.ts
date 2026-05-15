@@ -4,6 +4,7 @@ import { nowIso } from '@/utils/format';
 import { err, ok, type Result } from '@/utils/result';
 import { warehouseInputSchema, type WarehouseInput } from '../schemas';
 import type { Warehouse } from '../entities';
+import { appendEvent, buildWarehouseEvent } from './syncEvents';
 
 export async function createWarehouse(input: WarehouseInput): Promise<Result<Warehouse>> {
   const parsed = warehouseInputSchema.safeParse(input);
@@ -12,7 +13,7 @@ export async function createWarehouse(input: WarehouseInput): Promise<Result<War
   }
   const data = parsed.data;
   try {
-    return await db.transaction('rw', db.warehouses, async () => {
+    return await db.transaction('rw', [db.warehouses, db.syncEvents], async (tx) => {
       const dup = await db.warehouses.where('code').equalsIgnoreCase(data.code).first();
       if (dup && !dup.deletedAt) {
         return err({ kind: 'conflict', message: `Ya existe un almacén con código "${data.code}"` });
@@ -34,7 +35,11 @@ export async function createWarehouse(input: WarehouseInput): Promise<Result<War
       if (w.isDefault) {
         const existing = await db.warehouses.toArray();
         for (const e of existing) {
-          if (e.isDefault) await db.warehouses.put({ ...e, isDefault: false, updatedAt: now });
+          if (e.isDefault) {
+            const demoted = { ...e, isDefault: false, updatedAt: now };
+            await db.warehouses.put(demoted);
+            await appendEvent(buildWarehouseEvent(demoted), tx);
+          }
         }
       }
       await db.warehouses.put(w);
@@ -44,6 +49,7 @@ export async function createWarehouse(input: WarehouseInput): Promise<Result<War
         w.isDefault = true;
         await db.warehouses.put(w);
       }
+      await appendEvent(buildWarehouseEvent(w), tx);
       return ok(w);
     });
   } catch (cause) {
@@ -56,7 +62,7 @@ export async function updateWarehouse(
   patch: Partial<WarehouseInput>,
 ): Promise<Result<Warehouse>> {
   try {
-    return await db.transaction('rw', db.warehouses, async () => {
+    return await db.transaction('rw', [db.warehouses, db.syncEvents], async (tx) => {
       const existing = await db.warehouses.get(id);
       if (!existing || existing.deletedAt) {
         return err({ kind: 'not-found', entity: 'warehouse', id });
@@ -72,10 +78,15 @@ export async function updateWarehouse(
       if (patch.isDefault) {
         const all = await db.warehouses.toArray();
         for (const e of all) {
-          if (e.id !== id && e.isDefault) await db.warehouses.put({ ...e, isDefault: false, updatedAt: now });
+          if (e.id !== id && e.isDefault) {
+            const demoted = { ...e, isDefault: false, updatedAt: now };
+            await db.warehouses.put(demoted);
+            await appendEvent(buildWarehouseEvent(demoted), tx);
+          }
         }
       }
       await db.warehouses.put(next);
+      await appendEvent(buildWarehouseEvent(next), tx);
       return ok(next);
     });
   } catch (cause) {

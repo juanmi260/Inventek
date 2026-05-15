@@ -38,10 +38,12 @@ PWA móvil para el **control de inventario** de uno o varios almacenes.
 
 ## Estado
 
-**v1.0.0 — todas las fases del roadmap completas.**
+**v1.1.0 — sincronización continua con primario/réplica.**
 
-- Bundle inicial: ~115 KB gz (objetivo < 200 KB ✓).
-- 23 tests unitarios.
+- Fases 0-6 completas + Fase 7 (sync delta con bitácora de eventos y
+  topología primario/réplica con promoción en caliente).
+- Bundle inicial ~120 KB gz (objetivo < 200 KB ✓).
+- 31 tests unitarios.
 - CI con lint + typecheck + tests en cada push y PR.
 - Deploy automático a GitHub Pages tras merge a `main`.
 

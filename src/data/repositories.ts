@@ -11,6 +11,11 @@ import type {
   SyncEvent,
   User,
 } from '@/domain/entities';
+import {
+  appendEvent,
+  buildProductEvent,
+  buildWarehouseEvent,
+} from '@/domain/use-cases/syncEvents';
 import type {
   CategoryRepo,
   MovementRepo,
@@ -35,9 +40,13 @@ export const warehouseRepo: WarehouseRepo = {
     await db.warehouses.put(w);
   },
   async remove(id) {
-    const w = await db.warehouses.get(id);
-    if (!w) return;
-    await db.warehouses.put({ ...w, deletedAt: new Date().toISOString() });
+    await db.transaction('rw', [db.warehouses, db.syncEvents], async (tx) => {
+      const w = await db.warehouses.get(id);
+      if (!w) return;
+      const deleted = { ...w, deletedAt: new Date().toISOString() };
+      await db.warehouses.put(deleted);
+      await appendEvent(buildWarehouseEvent(deleted), tx);
+    });
   },
 };
 
@@ -82,9 +91,13 @@ export const productRepo: ProductRepo = {
     await db.products.put(p);
   },
   async remove(id) {
-    const p = await db.products.get(id);
-    if (!p) return;
-    await db.products.put({ ...p, deletedAt: new Date().toISOString() });
+    await db.transaction('rw', [db.products, db.syncEvents], async (tx) => {
+      const p = await db.products.get(id);
+      if (!p) return;
+      const deleted = { ...p, deletedAt: new Date().toISOString() };
+      await db.products.put(deleted);
+      await appendEvent(await buildProductEvent(deleted), tx);
+    });
   },
 };
 

@@ -3,6 +3,7 @@ import { newId } from '@/utils/ulid';
 import { nowIso } from '@/utils/format';
 import { err, ok, type Result } from '@/utils/result';
 import type { StockLevel } from '../entities';
+import { appendEvent, buildStockLevelLimitsEvent } from './syncEvents';
 
 export interface SetStockLimitsInput {
   warehouseId: string;
@@ -25,7 +26,7 @@ export async function setStockLimits(input: SetStockLimitsInput): Promise<Result
     });
   }
   try {
-    return await db.transaction('rw', [db.stockLevels], async () => {
+    return await db.transaction('rw', [db.stockLevels, db.syncEvents], async (tx) => {
       const existing = await db.stockLevels
         .where('[warehouseId+productId]')
         .equals([warehouseId, productId])
@@ -50,6 +51,7 @@ export async function setStockLimits(input: SetStockLimitsInput): Promise<Result
             updatedAt: now,
           };
       await db.stockLevels.put(next);
+      await appendEvent(buildStockLevelLimitsEvent(next), tx);
       return ok(next);
     });
   } catch (cause) {

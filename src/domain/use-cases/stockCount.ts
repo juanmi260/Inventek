@@ -3,6 +3,7 @@ import { newId } from '@/utils/ulid';
 import { nowIso } from '@/utils/format';
 import { err, ok, type Result } from '@/utils/result';
 import { createMovement } from './createMovement';
+import { appendEvent, buildStockCountEvent } from './syncEvents';
 import type { StockCount } from '../entities';
 
 export interface StartStockCountInput {
@@ -24,8 +25,8 @@ export async function startStockCount(
   try {
     return await db.transaction(
       'rw',
-      [db.stockCounts, db.stockLevels, db.warehouses, db.products],
-      async () => {
+      [db.stockCounts, db.stockLevels, db.warehouses, db.products, db.syncEvents],
+      async (tx) => {
         const w = await db.warehouses.get(input.warehouseId);
         if (!w || w.deletedAt) {
           return err({ kind: 'not-found', entity: 'warehouse', id: input.warehouseId });
@@ -69,6 +70,7 @@ export async function startStockCount(
           updatedAt: now,
         };
         await db.stockCounts.put(count);
+        await appendEvent(buildStockCountEvent(count), tx);
         return ok(count);
       },
     );
@@ -113,7 +115,7 @@ export async function removeCountedItem(
   productId: string,
 ): Promise<Result<StockCount>> {
   try {
-    return await db.transaction('rw', [db.stockCounts], async () => {
+    return await db.transaction('rw', [db.stockCounts, db.syncEvents], async (tx) => {
       const count = await db.stockCounts.get(countId);
       if (!count) return err({ kind: 'not-found', entity: 'stockCount', id: countId });
       if (count.status !== 'open') {
@@ -125,6 +127,7 @@ export async function removeCountedItem(
         updatedAt: nowIso(),
       };
       await db.stockCounts.put(next);
+      await appendEvent(buildStockCountEvent(next), tx);
       return ok(next);
     });
   } catch (cause) {
@@ -138,7 +141,7 @@ async function updateCountedLine(
   compute: (current: number | undefined) => number,
 ): Promise<Result<StockCount>> {
   try {
-    return await db.transaction('rw', [db.stockCounts, db.products], async () => {
+    return await db.transaction('rw', [db.stockCounts, db.products, db.syncEvents], async (tx) => {
       const count = await db.stockCounts.get(countId);
       if (!count) return err({ kind: 'not-found', entity: 'stockCount', id: countId });
       if (count.status !== 'open') {
@@ -158,6 +161,7 @@ async function updateCountedLine(
         : [...count.countedLines, { productId, counted: next, countedAt: now }];
       const updated: StockCount = { ...count, countedLines: lines, updatedAt: now };
       await db.stockCounts.put(updated);
+      await appendEvent(buildStockCountEvent(updated), tx);
       return ok(updated);
     });
   } catch (cause) {
@@ -244,6 +248,7 @@ export async function closeStockCount(countId: string): Promise<Result<CloseStoc
       updatedAt: nowIso(),
     };
     await db.stockCounts.put(closed);
+    await appendEvent(buildStockCountEvent(closed));
 
     return ok({
       count: closed,
@@ -262,7 +267,7 @@ export async function closeStockCount(countId: string): Promise<Result<CloseStoc
  */
 export async function cancelStockCount(countId: string): Promise<Result<StockCount>> {
   try {
-    return await db.transaction('rw', [db.stockCounts], async () => {
+    return await db.transaction('rw', [db.stockCounts, db.syncEvents], async (tx) => {
       const count = await db.stockCounts.get(countId);
       if (!count) return err({ kind: 'not-found', entity: 'stockCount', id: countId });
       if (count.status !== 'open') {
@@ -275,6 +280,7 @@ export async function cancelStockCount(countId: string): Promise<Result<StockCou
         updatedAt: nowIso(),
       };
       await db.stockCounts.put(next);
+      await appendEvent(buildStockCountEvent(next), tx);
       return ok(next);
     });
   } catch (cause) {

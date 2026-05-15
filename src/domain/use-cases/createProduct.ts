@@ -4,6 +4,7 @@ import { nowIso } from '@/utils/format';
 import { err, ok, type Result } from '@/utils/result';
 import { productInputSchema, type ProductInput } from '../schemas';
 import type { Product } from '../entities';
+import { appendEvent, buildProductEvent } from './syncEvents';
 
 export async function createProduct(input: ProductInput): Promise<Result<Product>> {
   const parsed = productInputSchema.safeParse(input);
@@ -12,7 +13,7 @@ export async function createProduct(input: ProductInput): Promise<Result<Product
   }
   const data = parsed.data;
   try {
-    return await db.transaction('rw', db.products, async () => {
+    return await db.transaction('rw', [db.products, db.syncEvents], async (tx) => {
       const dup = await db.products.where('sku').equalsIgnoreCase(data.sku).first();
       if (dup && !dup.deletedAt) {
         return err({ kind: 'conflict', message: `Ya existe un producto con SKU "${data.sku}"` });
@@ -46,6 +47,7 @@ export async function createProduct(input: ProductInput): Promise<Result<Product
         updatedAt: now,
       };
       await db.products.put(product);
+      await appendEvent(await buildProductEvent(product), tx);
       return ok(product);
     });
   } catch (cause) {
@@ -58,7 +60,7 @@ export async function updateProduct(
   patch: Partial<ProductInput>,
 ): Promise<Result<Product>> {
   try {
-    return await db.transaction('rw', db.products, async () => {
+    return await db.transaction('rw', [db.products, db.syncEvents], async (tx) => {
       const existing = await db.products.get(id);
       if (!existing || existing.deletedAt) {
         return err({ kind: 'not-found', entity: 'product', id });
@@ -75,6 +77,7 @@ export async function updateProduct(
         }
       }
       await db.products.put(next);
+      await appendEvent(await buildProductEvent(next), tx);
       return ok(next);
     });
   } catch (cause) {

@@ -1,21 +1,20 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { PageHeader } from '@/ui/PageHeader';
 import { Button } from '@/ui/Button';
 import { Input } from '@/ui/Input';
 import { showToast } from '@/ui/Toast';
 import { Sheet } from '@/ui/Sheet';
+import { ConfirmDialog } from '@/ui/ConfirmDialog';
 import { Scanner } from '@/features/scanner/Scanner';
-import {
-  connectToHost,
-  startHost,
-  type SyncEvent,
-  type SyncSession,
-} from '@/platform/p2pSync';
+import { useSync } from '@/state/sync';
 import { encodePeerPayload, parsePayload, renderQrDataUrl } from '@/platform/qr';
-import { formatBytes } from '@/utils/format';
 import {
-  Smartphone,
+  canPromoteSelf,
+  setSelfAsPrimary,
+} from '@/domain/use-cases/primary';
+import { formatDate } from '@/utils/format';
+import {
   QrCode,
   ScanLine,
   ChevronRight,
@@ -23,56 +22,41 @@ import {
   CheckCircle2,
   AlertTriangle,
   Copy,
+  Crown,
+  Smartphone,
+  RefreshCw,
 } from 'lucide-react';
-
-type Phase =
-  | 'idle'
-  | 'host-opening'
-  | 'host-waiting'
-  | 'guest-opening'
-  | 'guest-connecting'
-  | 'connected'
-  | 'syncing'
-  | 'done'
-  | 'error';
-
-interface Progress {
-  sentBytes?: number;
-  recvBytes?: number;
-  recvCount?: number;
-  otherDeviceId?: string;
-  peerId?: string;
-  errorMessage?: string;
-}
 
 export default function SyncPage() {
   const [params, setParams] = useSearchParams();
-  const [phase, setPhase] = useState<Phase>('idle');
-  const [progress, setProgress] = useState<Progress>({});
-  const sessionRef = useRef<SyncSession | null>(null);
-  const [qrUrl, setQrUrl] = useState<string | null>(null);
+  const sync = useSync();
   const [showConnect, setShowConnect] = useState(false);
   const [showQrScanner, setShowQrScanner] = useState(false);
   const [manualId, setManualId] = useState('');
+  const [qrUrl, setQrUrl] = useState<string | null>(null);
+  const [promoteOpen, setPromoteOpen] = useState(false);
+  const [promotionState, setPromotionState] = useState<string>('');
 
-  const reset = () => {
-    sessionRef.current?.destroy();
-    sessionRef.current = null;
-    setPhase('idle');
-    setProgress({});
-    setQrUrl(null);
-  };
-
+  // Refresh primary info on mount.
   useEffect(() => {
-    return () => sessionRef.current?.destroy();
+    void sync.refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Deep link: /sync?peer=<id> connects directly when arriving from a QR scan
-  // in another page.
+  // Render QR when we get a peer-id.
+  useEffect(() => {
+    if (sync.progress.peerId) {
+      void renderQrDataUrl(encodePeerPayload(sync.progress.peerId), { width: 280 }).then(setQrUrl);
+    } else {
+      setQrUrl(null);
+    }
+  }, [sync.progress.peerId]);
+
+  // Deep link ?peer=... connects directly.
   useEffect(() => {
     const peer = params.get('peer');
-    if (peer && phase === 'idle') {
-      beGuest(peer);
+    if (peer && sync.progress.phase === 'idle') {
+      sync.connect(peer);
       const next = new URLSearchParams(params);
       next.delete('peer');
       setParams(next, { replace: true });
@@ -80,80 +64,86 @@ export default function SyncPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleEvent = (e: SyncEvent) => {
-    if (e.type === 'opening') return;
-    if (e.type === 'peer-id') {
-      setProgress((p) => ({ ...p, peerId: e.peerId }));
-      void renderQrDataUrl(encodePeerPayload(e.peerId), { width: 280 }).then(setQrUrl);
-      setPhase('host-waiting');
-    } else if (e.type === 'connecting') {
-      setPhase('guest-connecting');
-    } else if (e.type === 'connected') {
-      setProgress((p) => ({ ...p, otherDeviceId: e.otherDeviceId }));
-      setPhase('connected');
-    } else if (e.type === 'sent-snapshot') {
-      setProgress((p) => ({ ...p, sentBytes: e.bytes }));
-      setPhase('syncing');
-    } else if (e.type === 'received-snapshot') {
-      setProgress((p) => ({ ...p, recvBytes: e.bytes, recvCount: e.count }));
-    } else if (e.type === 'done') {
-      setPhase('done');
-    } else if (e.type === 'error') {
-      setProgress((p) => ({ ...p, errorMessage: e.message }));
-      setPhase('error');
+  const tryPromote = async () => {
+    const check = await canPromoteSelf();
+    if (!check.ok) {
+      const map: Record<string, string> = {
+        'no-primary': 'Aún no hay primario. Eres el primero — al hacerte primario las réplicas se conectarán a ti.',
+        'is-already-primary': 'Ya eres el primario.',
+        mismatch: check.reason === 'mismatch' ? (check.details ?? '') : '',
+        unknown: check.reason === 'unknown' ? (check.details ?? '') : '',
+      };
+      setPromotionState(map[check.reason] ?? '');
+      if (check.reason === 'no-primary' || check.reason === 'is-already-primary') {
+        // No-primary case is actually ok — we can proceed to set ourselves.
+        if (check.reason === 'no-primary') {
+          setPromoteOpen(true);
+          return;
+        }
+        showToast({ title: map[check.reason] ?? 'No se puede promover', variant: 'warning' });
+        return;
+      }
+      setPromoteOpen(true);
+      return;
     }
+    setPromotionState('Tu copia local está al día. Puedes hacerte primario sin perder datos.');
+    setPromoteOpen(true);
   };
 
-  const beHost = () => {
-    reset();
-    setPhase('host-opening');
-    sessionRef.current = startHost(handleEvent);
-  };
-
-  const beGuest = (peerId: string) => {
-    reset();
-    setShowConnect(false);
-    setShowQrScanner(false);
-    setPhase('guest-opening');
-    sessionRef.current = connectToHost(peerId, handleEvent);
+  const doPromote = async () => {
+    const info = await setSelfAsPrimary();
+    await sync.refresh();
+    showToast({ title: 'Eres el primario', description: info.peerId, variant: 'success' });
+    setPromoteOpen(false);
   };
 
   return (
     <>
       <PageHeader title="Sincronizar" back="/more" />
 
-      {phase === 'idle' ? (
-        <div className="space-y-3 px-3">
-          <p className="text-sm text-muted">
-            Intercambia tu inventario directamente con otro dispositivo en la misma sesión.
-            La conexión es P2P (WebRTC) y los datos no se almacenan en ningún servidor:
-            solo se usa un broker público gratuito para descubrir al otro dispositivo.
-          </p>
-          <OptionCard
-            icon={<QrCode size={24} />}
-            title="Mostrar mi código"
-            description="Muestra un QR para que otro dispositivo lo escanee y se conecte."
-            onClick={beHost}
-          />
-          <OptionCard
-            icon={<ScanLine size={24} />}
-            title="Conectar a otro dispositivo"
-            description="Escanea el QR del otro dispositivo o pega su código."
-            onClick={() => setShowConnect(true)}
-          />
-          <p className="px-1 pt-2 text-xs text-muted">
-            Ambas partes acabarán con la fusión de los inventarios. Antes de cualquier
-            cambio, considera exportar un backup desde "Backup y restaurar".
-          </p>
-        </div>
-      ) : (
-        <SessionView
-          phase={phase}
-          progress={progress}
-          qrUrl={qrUrl}
-          onCancel={reset}
-        />
-      )}
+      <div className="space-y-3 px-3">
+        <PrimaryStatusCard />
+
+        {sync.progress.phase === 'idle' && (
+          <>
+            <OptionCard
+              icon={<QrCode size={24} />}
+              title={sync.isHost ? 'Modo primario · escuchando' : 'Mostrar mi código'}
+              description="Muestra un QR para que otro dispositivo lo escanee y se conecte."
+              onClick={sync.startHostMode}
+            />
+            <OptionCard
+              icon={<ScanLine size={24} />}
+              title="Conectar a otro dispositivo"
+              description="Escanea el QR del otro dispositivo o pega su código."
+              onClick={() => setShowConnect(true)}
+            />
+            {sync.primary && sync.primary.deviceId !== getDeviceIdSafe() && (
+              <OptionCard
+                icon={<RefreshCw size={24} />}
+                title="Sincronizar con el primario"
+                description={`Reconecta con ${sync.primary.peerId}.`}
+                onClick={() => sync.connect(sync.primary!.peerId)}
+              />
+            )}
+            <button
+              type="button"
+              onClick={tryPromote}
+              className="flex w-full items-center gap-3 rounded border border-dashed border-border p-3 text-left text-sm hover:bg-surface"
+            >
+              <Crown size={18} className="text-muted" />
+              <span className="flex-1">
+                {sync.isHost ? 'Ya eres el primario' : 'Hacerme primario'}
+              </span>
+              {!sync.isHost && <ChevronRight size={16} className="text-muted" />}
+            </button>
+          </>
+        )}
+
+        {sync.progress.phase !== 'idle' && (
+          <SessionView qrUrl={qrUrl} />
+        )}
+      </div>
 
       <Sheet
         open={showConnect}
@@ -184,7 +174,10 @@ export default function SyncPage() {
               Cancelar
             </Button>
             <Button
-              onClick={() => beGuest(manualId.trim())}
+              onClick={() => {
+                setShowConnect(false);
+                sync.connect(manualId.trim());
+              }}
               disabled={!manualId.trim()}
             >
               Conectar
@@ -205,11 +198,11 @@ export default function SyncPage() {
             onDetected={(text) => {
               const parsed = parsePayload(text);
               if (parsed.kind === 'peer') {
-                beGuest(parsed.peerId);
+                setShowQrScanner(false);
+                sync.connect(parsed.peerId);
               } else {
                 showToast({
                   title: 'QR no reconocido',
-                  description: 'Este QR no parece ser un código de sincronización.',
                   variant: 'warning',
                 });
               }
@@ -217,61 +210,66 @@ export default function SyncPage() {
           />
         </div>
       )}
+
+      <ConfirmDialog
+        open={promoteOpen}
+        onOpenChange={setPromoteOpen}
+        title="Hacerme primario"
+        description={promotionState}
+        confirmLabel="Confirmar"
+        onConfirm={doPromote}
+      />
     </>
   );
 }
 
-function OptionCard({
-  icon,
-  title,
-  description,
-  onClick,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex w-full items-center gap-3 rounded border border-border bg-surface p-3 text-left hover:bg-surface2"
-    >
-      <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded bg-primary/10 text-primary">
-        {icon}
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="font-medium">{title}</div>
-        <div className="text-xs text-muted">{description}</div>
+function getDeviceIdSafe(): string {
+  try {
+    return localStorage.getItem('inventek.deviceId') ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function PrimaryStatusCard() {
+  const sync = useSync();
+  if (!sync.primary) {
+    return (
+      <div className="rounded border border-dashed border-border bg-surface p-3 text-sm text-muted">
+        Todavía no hay un dispositivo primario. El primero que sincronice puede
+        marcarse como tal y los demás se conectarán a él automáticamente.
       </div>
-      <ChevronRight size={18} className="text-muted" />
-    </button>
+    );
+  }
+  const me = getDeviceIdSafe();
+  return (
+    <div className="rounded border border-border bg-surface p-3">
+      <div className="flex items-center gap-2 text-sm">
+        <Crown size={16} className={sync.isHost ? 'text-warning' : 'text-muted'} />
+        <span className="font-medium">
+          {sync.isHost
+            ? 'Este dispositivo es el primario'
+            : `Primario: ${sync.primary.deviceId === me ? 'tú' : sync.primary.deviceId}`}
+        </span>
+      </div>
+      <div className="mt-1 break-all font-mono text-[11px] text-muted">{sync.primary.peerId}</div>
+      {sync.lastSyncAt && (
+        <div className="mt-1 text-xs text-muted">
+          Última sincronización: {formatDate(sync.lastSyncAt)}
+        </div>
+      )}
+    </div>
   );
 }
 
-function SessionView({
-  phase,
-  progress,
-  qrUrl,
-  onCancel,
-}: {
-  phase: Phase;
-  progress: Progress;
-  qrUrl: string | null;
-  onCancel: () => void;
-}) {
-  const isLoading =
-    phase === 'host-opening' ||
-    phase === 'guest-opening' ||
-    phase === 'guest-connecting' ||
-    phase === 'syncing';
-
+function SessionView({ qrUrl }: { qrUrl: string | null }) {
+  const sync = useSync();
+  const { progress, cancel } = sync;
   return (
-    <div className="space-y-3 px-3">
-      <StatusBanner phase={phase} message={progress.errorMessage} />
+    <div className="space-y-3">
+      <StatusBanner phase={progress.phase} message={progress.errorMessage} />
 
-      {phase === 'host-waiting' && progress.peerId && (
+      {progress.phase === 'waiting' && progress.peerId && (
         <div className="rounded border border-border bg-surface p-4 text-center">
           {qrUrl && (
             <img
@@ -306,42 +304,33 @@ function SessionView({
         </div>
       )}
 
-      {phase === 'connected' || phase === 'syncing' || phase === 'done' ? (
-        <div className="rounded border border-border bg-surface p-3">
+      {(progress.phase === 'syncing' ||
+        progress.phase === 'connected' ||
+        progress.phase === 'done') && (
+        <div className="rounded border border-border bg-surface p-3 text-sm">
           {progress.otherDeviceId && (
-            <div className="flex items-center gap-2 text-sm">
-              <Smartphone size={16} className="text-primary" />
-              <span className="truncate font-mono">{progress.otherDeviceId}</span>
+            <div className="flex items-center gap-2">
+              <Smartphone size={14} className="text-primary" />
+              <span className="truncate font-mono text-xs">{progress.otherDeviceId}</span>
             </div>
           )}
           <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-            <Stat label="Enviado" value={progress.sentBytes != null ? formatBytes(progress.sentBytes) : '—'} />
-            <Stat label="Recibido" value={progress.recvBytes != null ? formatBytes(progress.recvBytes) : '—'} />
+            <Stat label="Enviados" value={String(progress.sent)} />
+            <Stat label="Recibidos" value={String(progress.received)} />
           </div>
-          {progress.recvCount != null && phase === 'done' && (
-            <div className="mt-2 text-xs text-muted">
-              {progress.recvCount} registros aplicados del otro dispositivo.
-            </div>
-          )}
         </div>
-      ) : null}
+      )}
 
       <div className="flex justify-end gap-2 pt-2">
-        <Button variant={phase === 'done' ? 'primary' : 'secondary'} onClick={onCancel}>
-          {phase === 'done' ? 'Terminar' : 'Cancelar'}
+        <Button variant={progress.phase === 'done' ? 'primary' : 'secondary'} onClick={cancel}>
+          {progress.phase === 'done' ? 'Terminar' : 'Cancelar'}
         </Button>
       </div>
-
-      {isLoading && (
-        <p className="px-1 text-center text-xs text-muted">
-          Esto puede tardar unos segundos según tu conexión y el tamaño de los datos.
-        </p>
-      )}
     </div>
   );
 }
 
-function StatusBanner({ phase, message }: { phase: Phase; message?: string }) {
+function StatusBanner({ phase, message }: { phase: string; message?: string }) {
   if (phase === 'error') {
     return (
       <div className="flex items-start gap-2 rounded border border-danger/40 bg-danger/5 p-3">
@@ -359,21 +348,16 @@ function StatusBanner({ phase, message }: { phase: Phase; message?: string }) {
         <CheckCircle2 size={18} className="mt-0.5 flex-shrink-0 text-success" />
         <div className="min-w-0 text-sm">
           <div className="font-medium">Sincronización completada</div>
-          <div className="text-xs text-muted">El stock se ha reconstruido a partir del histórico.</div>
         </div>
       </div>
     );
   }
-  const labels: Record<Phase, string> = {
-    idle: '',
-    'host-opening': 'Abriendo canal en el broker…',
-    'host-waiting': 'Esperando al otro dispositivo…',
-    'guest-opening': 'Conectando al broker…',
-    'guest-connecting': 'Conectando al otro dispositivo…',
-    connected: 'Conectado. Intercambiando datos…',
-    syncing: 'Sincronizando…',
-    done: '',
-    error: '',
+  const labels: Record<string, string> = {
+    opening: 'Abriendo canal en el broker…',
+    waiting: 'Esperando al otro dispositivo…',
+    connecting: 'Conectando…',
+    connected: 'Conectado. Intercambiando watermarks…',
+    syncing: 'Sincronizando deltas…',
   };
   if (!labels[phase]) return null;
   return (
@@ -381,6 +365,35 @@ function StatusBanner({ phase, message }: { phase: Phase; message?: string }) {
       <Loader2 size={16} className="animate-spin text-primary" />
       <span>{labels[phase]}</span>
     </div>
+  );
+}
+
+function OptionCard({
+  icon,
+  title,
+  description,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-center gap-3 rounded border border-border bg-surface p-3 text-left hover:bg-surface2"
+    >
+      <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded bg-primary/10 text-primary">
+        {icon}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="font-medium">{title}</div>
+        <div className="text-xs text-muted">{description}</div>
+      </div>
+      <ChevronRight size={18} className="text-muted" />
+    </button>
   );
 }
 

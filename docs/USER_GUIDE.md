@@ -121,18 +121,86 @@ Los backups locales pueden perderse si el navegador desaloja los datos.
 
 Más → Sincronizar con otro dispositivo.
 
+Inventek mantiene una **bitácora de eventos** local con cada cambio que
+haces (alta, edición, movimiento, recuento, ajuste de mínimos…). Al
+sincronizar con otro dispositivo, **solo viajan los cambios nuevos**, no
+todo el inventario; los movimientos llevan identificadores únicos (ULID)
+y nunca se duplican aunque sincronices muchas veces.
+
+### Primer emparejamiento
+
 1. Dispositivo A: "Mostrar mi código". Aparece un QR.
 2. Dispositivo B: "Conectar a otro dispositivo" → "Escanear QR" → enfoca
    el QR de A.
 3. Ambos dispositivos se conectan **directamente** (WebRTC, cifrado por
-   DTLS). Solo se usa un broker público gratuito para descubrirse, no
-   pasa información de tu inventario por él.
-4. Intercambian snapshots y al terminar reconstruyen el stock desde el
-   histórico de movimientos.
+   DTLS). Solo se usa un broker público gratuito (`0.peerjs.com`) para
+   descubrirse; el inventario nunca pasa por él.
+4. Intercambian deltas, reconstruyen el stock y registran la huella del
+   estado para futuras promociones.
 
-Los movimientos tienen identificadores únicos (ULID) que se deduplican
-automáticamente, así que puedes sincronizar las veces que quieras sin
-duplicar datos.
+### Topología primario / réplica
+
+Para más de dos dispositivos lo recomendable es **designar uno como
+primario** (típicamente el que está más tiempo encendido — un PC, un
+tablet de oficina). El resto serán réplicas que se conectan al primario
+en cuanto abren la app.
+
+- **Hacerme primario**: botón en /sync. Si tu copia local coincide con
+  la huella del primario actual (mismo número y orden de eventos),
+  puedes promoverte sin riesgo. Si no coincide, te avisará y tendrás
+  que sincronizar primero.
+- **Quién es el primario** es un dato sincronizado: en cuanto alguien se
+  promociona, todas las réplicas reciben el cambio en el siguiente sync
+  y redirigen sus reconexiones automáticamente.
+- **Peer-id estable**: cada dispositivo tiene un identificador derivado
+  de su `deviceId` (visible en Acerca de). Las réplicas recuerdan el del
+  primario y reconectan **sin escanear QR** cada vez que abren la app.
+
+### Auto-reconexión al abrir la app
+
+Si tu dispositivo es **réplica** y conoce al primario, al desbloquear
+la app intenta sincronizar una vez automáticamente. Si tu dispositivo
+es **primario**, abre escucha en el broker para que las réplicas te
+encuentren. El estado se ve en el **tile de sincronización del
+dashboard**:
+
+- 🟢 *Sincronizado con el primario* — todo al día.
+- 🔄 *Sincronizando…* — intercambiando deltas ahora.
+- 👑 *Eres el primario · escuchando* — esperando réplicas.
+- 🔌 *Sin conexión con el primario* — el otro dispositivo no responde
+  (probablemente no tiene la app abierta).
+
+### Qué pasa si el primario no está disponible
+
+- **Las escrituras locales siempre funcionan.** Tu réplica acepta
+  movimientos, altas y recuentos como siempre. Los cambios quedan en
+  la bitácora local esperando.
+- En cuanto el primario vuelva online y abras la app de cualquiera de
+  los dos, el delta sync los aplica en segundos.
+- Si tienes prisa, puedes **sincronizar directamente con otra réplica**
+  (la opción "Conectar a otro dispositivo" sigue disponible). Los datos
+  acaban convergiendo igual.
+
+### Propagación entre 3+ dispositivos
+
+Los datos solo se propagan entre dispositivos que se conectan **en el
+momento** en que se conectan. Si A sincroniza con B y luego con C, A
+hace de puente y C recibe lo de B "rebotado", pero B no se entera de los
+cambios de C hasta una nueva sincronización A↔B (o B↔C directa). Con la
+topología en estrella, basta con que cada réplica sincronice con el
+primario para que todo converja.
+
+### Casos límite
+
+- **El primario no aparece en mucho tiempo**: puedes promover una
+  réplica forzando la promoción (el aviso te dirá que podrías perder
+  cambios suyos si vuelve, pero los movimientos pendientes seguirán
+  siendo válidos cuando se reencuentren).
+- **Edición concurrente del mismo campo**: si dos dispositivos editan
+  a la vez el mismo campo del mismo producto, gana el último (`updatedAt`
+  más reciente). Para movimientos y operaciones aditivas (entradas,
+  salidas, recuentos) **no hay conflicto** porque cada uno tiene su
+  ULID único y se aplican todos.
 
 ## 8. Compartir un producto por QR
 

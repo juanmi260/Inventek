@@ -4,6 +4,7 @@ import { nowIso } from '@/utils/format';
 import { err, ok, type Result } from '@/utils/result';
 import { movementInputSchema, type MovementInput } from '../schemas';
 import type { Movement, MovementLine, StockLevel } from '../entities';
+import { appendEvent, buildMovementEvent } from './syncEvents';
 
 export interface CreateMovementResult {
   movement: Movement;
@@ -35,8 +36,8 @@ export async function createMovement(
   try {
     return await db.transaction(
       'rw',
-      [db.movements, db.movementLines, db.stockLevels, db.products, db.warehouses],
-      async () => {
+      [db.movements, db.movementLines, db.stockLevels, db.products, db.warehouses, db.syncEvents],
+      async (tx) => {
         // Validate referenced entities exist
         if (data.warehouseId) {
           const w = await db.warehouses.get(data.warehouseId);
@@ -127,6 +128,8 @@ export async function createMovement(
           notes: l.notes,
         }));
         for (const l of lines) await db.movementLines.put(l);
+
+        await appendEvent(buildMovementEvent(movement, lines), tx);
 
         return ok({ movement, lines });
       },

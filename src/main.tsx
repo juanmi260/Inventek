@@ -5,6 +5,7 @@ import { router } from './app/router';
 import { ThemeProvider } from './state/theme';
 import { SettingsProvider } from './state/settings';
 import { LockProvider, useLock } from './state/lock';
+import { SyncProvider } from './state/sync';
 import { LockScreen } from './ui/LockScreen';
 import { ToastProvider } from './ui/Toast';
 import { registerSW } from './app/registerSW';
@@ -29,9 +30,11 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <ThemeProvider>
       <SettingsProvider>
         <LockProvider>
-          <ToastProvider>
-            <AppShell />
-          </ToastProvider>
+          <SyncProvider>
+            <ToastProvider>
+              <AppShell />
+            </ToastProvider>
+          </SyncProvider>
         </LockProvider>
       </SettingsProvider>
     </ThemeProvider>

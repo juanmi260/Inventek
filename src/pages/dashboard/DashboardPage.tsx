@@ -12,13 +12,19 @@ import {
   AlertTriangle,
   ClipboardList,
   Plus,
+  CheckCircle2,
+  Loader2,
+  WifiOff,
+  Crown,
 } from 'lucide-react';
+import { useSync } from '@/state/sync';
 import { useActiveWarehouse } from '@/state/active-warehouse';
 import { EmptyState } from '@/ui/EmptyState';
 import { formatNumber } from '@/utils/format';
 
 export default function DashboardPage() {
   const { active, warehouses } = useActiveWarehouse();
+  const sync = useSync();
 
   const stats = useLiveQuery(
     async () => {
@@ -78,6 +84,8 @@ export default function DashboardPage() {
   return (
     <>
       <PageHeader title="Inicio" />
+
+      {sync.primary && <SyncStatusTile />}
 
       <section className="grid grid-cols-2 gap-2 px-3">
         <Card icon={<Package size={20} />} label="Productos" value={stats.productCount} to="/products" />
@@ -155,6 +163,49 @@ export default function DashboardPage() {
         </section>
       )}
     </>
+  );
+}
+
+function SyncStatusTile() {
+  const sync = useSync();
+  const { phase, errorMessage } = sync.progress;
+  let icon: React.ReactNode = <WifiOff size={20} />;
+  let label = 'Sin conexión con primario';
+  let className = 'border-border';
+  let to = '/sync';
+  if (sync.isHost) {
+    icon = <Crown size={20} className="text-warning" />;
+    label = phase === 'waiting' ? 'Eres el primario · escuchando' : 'Eres el primario';
+    className = 'border-warning/30 bg-warning/5';
+  } else if (phase === 'done') {
+    icon = <CheckCircle2 size={20} className="text-success" />;
+    label = 'Sincronizado con el primario';
+    className = 'border-success/30 bg-success/5';
+  } else if (phase === 'syncing' || phase === 'connected' || phase === 'connecting' || phase === 'opening') {
+    icon = <Loader2 size={20} className="animate-spin text-primary" />;
+    label = 'Sincronizando…';
+    className = 'border-primary/30 bg-primary/5';
+  } else if (phase === 'error') {
+    icon = <AlertTriangle size={20} className="text-danger" />;
+    label = `Error: ${errorMessage ?? 'no se pudo conectar'}`;
+    className = 'border-danger/30 bg-danger/5';
+  }
+  return (
+    <section className="px-3 pt-3">
+      <Link to={to} className={`flex items-center gap-3 rounded border p-3 ${className}`}>
+        <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded bg-surface2">
+          {icon}
+        </span>
+        <div className="min-w-0 flex-1 text-sm">
+          <div className="truncate font-medium">{label}</div>
+          {sync.lastSyncAt && (
+            <div className="text-xs text-muted">
+              Última: {new Date(sync.lastSyncAt).toLocaleString()}
+            </div>
+          )}
+        </div>
+      </Link>
+    </section>
   );
 }
 

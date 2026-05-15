@@ -55,6 +55,20 @@ Plan en fases con hitos medibles. Cada fase termina con una versión instalable 
 
 **Done cuando:** dos móviles intercambian un día entero de movimientos sin perder datos ni duplicar.
 
+## Fase 7 · Sync continua con topología primario/réplica — ✅ completada
+
+**Objetivo:** que la sincronización funcione delta a delta sobre una bitácora de eventos, con un dispositivo designado como primario al que las réplicas se conectan automáticamente, y posibilidad de cambiar quién es el primario en caliente.
+
+- [x] Bitácora `syncEvents` poblada por todos los use cases (products, warehouses, movements, stockLevels limits, stockCounts) dentro de la misma transacción que el cambio.
+- [x] Watermarks por `deviceId` (último id visto) → delta sync que envía solo lo nuevo.
+- [x] Aplicación idempotente de eventos remotos con LWW por `updatedAt`; movements deduplicados por ULID; stockLevels.quantity *no* viajan (se recomputa con `rebuildStockLevels` tras aplicar).
+- [x] Setting `sync.primary` (peerId + deviceId + updatedAt) propagado como evento más; las réplicas redirigen su autoreconexión al nuevo primario en cuanto reciben el cambio.
+- [x] Peer-id estable basado en deviceId (`inventek-<ulid>`) para que las réplicas reconecten sin escanear QR cada vez.
+- [x] `SyncProvider` que al desbloquear la app intenta una vez: primario abre listener, réplica intenta conectar al primario.
+- [x] Promoción de primario con precondición de huella (`fingerprintsMatch`) — la réplica solo se promueve si tiene exactamente los mismos eventos que el primario.
+- [x] Tile de estado de sync en el dashboard (sincronizado / sincronizando / sin conexión / soy primario / error).
+- [x] 8 tests nuevos cubriendo emisión, aplicación idempotente, LWW, watermarks y huella.
+
 ## Fase 4 · Recuentos y operación rápida (Semanas 10–11) — ✅ completada
 
 **Objetivo:** la app es excelente para inventarios físicos.

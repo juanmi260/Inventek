@@ -1,17 +1,26 @@
 import Peer, { type DataConnection } from 'peerjs';
-import pako from 'pako';
-import { exportBackup, importBackup, type BackupFile } from './backup';
+import {
+  advanceWatermarks,
+  applyEvents,
+  computeLocalWatermarks,
+  eventsNewerThan,
+  fingerprint,
+  type Fingerprint,
+  type Watermarks,
+} from '@/domain/use-cases/syncEvents';
 import { rebuildStockLevels } from '@/domain/use-cases/rebuildStockLevels';
 import { getDeviceId } from './device';
+import type { SyncEvent as InventekSyncEvent } from '@/domain/entities';
 
 export type SyncEvent =
   | { type: 'opening' }
   | { type: 'peer-id'; peerId: string }
   | { type: 'connecting' }
   | { type: 'connected'; otherDeviceId: string }
-  | { type: 'sent-snapshot'; bytes: number }
-  | { type: 'received-snapshot'; bytes: number; count: number }
-  | { type: 'done'; sent: number; received: number }
+  | { type: 'exchanging-watermarks' }
+  | { type: 'sending'; count: number }
+  | { type: 'receiving'; count: number; applied: number }
+  | { type: 'done'; sent: number; received: number; otherFingerprint: Fingerprint }
   | { type: 'error'; message: string }
   | { type: 'closed' };
 
@@ -19,104 +28,128 @@ export interface SyncSession {
   destroy: () => void;
 }
 
+// ─── Wire protocol ────────────────────────────────────────────────────────
+
 interface HelloMsg {
   type: 'hello';
   deviceId: string;
   appVersion: string;
+  watermarks: Watermarks;
+  fingerprint: Fingerprint;
 }
-interface SnapshotMsg {
-  type: 'snapshot';
-  payload: string; // base64-encoded gzipped JSON of a BackupFile
+
+interface EventsMsg {
+  type: 'events';
+  events: InventekSyncEvent[];
+  done: boolean; // true when this is the last batch
 }
+
 interface AckMsg {
   type: 'ack';
   applied: number;
 }
-type WireMsg = HelloMsg | SnapshotMsg | AckMsg;
+
+type WireMsg = HelloMsg | EventsMsg | AckMsg;
+
+const BATCH_SIZE = 200;
 
 function send(conn: DataConnection, msg: WireMsg) {
   conn.send(JSON.stringify(msg));
 }
 
-function bytesToBase64(bytes: Uint8Array): string {
-  let bin = '';
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)));
-  }
-  return btoa(bin);
-}
-
-function base64ToBytes(s: string): Uint8Array {
-  const bin = atob(s);
-  const arr = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-  return arr;
-}
-
-async function buildSnapshot(): Promise<{ msg: SnapshotMsg; bytes: number }> {
-  const backup = await exportBackup();
-  const json = JSON.stringify(backup);
-  const gz = pako.gzip(json);
-  const payload = bytesToBase64(gz);
-  return { msg: { type: 'snapshot', payload }, bytes: gz.length };
-}
-
-async function applySnapshot(msg: SnapshotMsg): Promise<{ count: number; bytes: number }> {
-  const bytes = base64ToBytes(msg.payload);
-  const json = pako.ungzip(bytes, { to: 'string' });
-  const backup = JSON.parse(json) as BackupFile;
-  const summary = await importBackup(backup, 'merge');
-  const count = Object.values(summary).reduce((a, b) => a + b, 0);
-  return { count, bytes: bytes.length };
-}
+// ─── Protocol state machine ───────────────────────────────────────────────
 
 function attachProtocol(conn: DataConnection, emit: (e: SyncEvent) => void) {
-  let theirDeviceId: string | null = null;
-  let snapshotReceived = false;
+  let helloReceived = false;
+  let peerWatermarks: Watermarks = {};
+  let peerFingerprint: Fingerprint | null = null;
+  let sentDone = false;
+  let receivedDone = false;
   let ackReceived = false;
-  let sentBytes = 0;
-  let recvCount = 0;
-  let recvBytes = 0;
+  let sentCount = 0;
+  let receivedCount = 0;
+  let appliedCount = 0;
+  let anyMovementApplied = false;
 
   const tryFinish = async () => {
-    if (snapshotReceived && ackReceived) {
-      try {
-        await rebuildStockLevels();
-      } catch (e) {
-        emit({ type: 'error', message: `rebuildStockLevels: ${(e as Error).message}` });
-        return;
+    if (sentDone && receivedDone && ackReceived) {
+      if (anyMovementApplied) {
+        try {
+          await rebuildStockLevels();
+        } catch (e) {
+          emit({ type: 'error', message: `rebuild: ${(e as Error).message}` });
+          return;
+        }
       }
-      emit({ type: 'done', sent: sentBytes, received: recvBytes });
+      emit({
+        type: 'done',
+        sent: sentCount,
+        received: receivedCount,
+        otherFingerprint: peerFingerprint ?? { watermarks: {}, eventCount: 0 },
+      });
       setTimeout(() => conn.close(), 300);
     }
   };
 
+  const sendOurEvents = async () => {
+    const events = await eventsNewerThan(peerWatermarks);
+    sentCount = events.length;
+    emit({ type: 'sending', count: events.length });
+    // Chunk to keep individual messages reasonable.
+    for (let i = 0; i < events.length; i += BATCH_SIZE) {
+      const batch = events.slice(i, i + BATCH_SIZE);
+      const isLast = i + BATCH_SIZE >= events.length;
+      send(conn, { type: 'events', events: batch, done: isLast });
+    }
+    if (events.length === 0) {
+      send(conn, { type: 'events', events: [], done: true });
+    }
+    sentDone = true;
+  };
+
   conn.on('data', async (raw: unknown) => {
     try {
-      const msg: WireMsg =
-        typeof raw === 'string' ? JSON.parse(raw) : (raw as WireMsg);
+      const msg: WireMsg = typeof raw === 'string' ? JSON.parse(raw) : (raw as WireMsg);
+
       if (msg.type === 'hello') {
-        theirDeviceId = msg.deviceId;
+        if (helloReceived) return;
+        helloReceived = true;
+        peerWatermarks = msg.watermarks;
+        peerFingerprint = msg.fingerprint;
         emit({ type: 'connected', otherDeviceId: msg.deviceId });
-        // Build and send our snapshot.
-        const { msg: snap, bytes } = await buildSnapshot();
-        sentBytes = bytes;
-        send(conn, snap);
-        emit({ type: 'sent-snapshot', bytes });
-      } else if (msg.type === 'snapshot') {
-        const { count, bytes } = await applySnapshot(msg);
-        recvCount = count;
-        recvBytes = bytes;
-        snapshotReceived = true;
-        emit({ type: 'received-snapshot', bytes, count });
-        send(conn, { type: 'ack', applied: count });
-      } else if (msg.type === 'ack') {
+        emit({ type: 'exchanging-watermarks' });
+        await sendOurEvents();
+        return;
+      }
+
+      if (msg.type === 'events') {
+        if (msg.events.length > 0) {
+          const result = await applyEvents(msg.events);
+          appliedCount += result.applied;
+          receivedCount += msg.events.length;
+          if (result.movementsTouched > 0) anyMovementApplied = true;
+          emit({ type: 'receiving', count: receivedCount, applied: appliedCount });
+          // Advance our watermarks to the highest id per device in this batch.
+          const incoming: Watermarks = {};
+          for (const ev of msg.events) {
+            const cur = incoming[ev.deviceId];
+            if (!cur || ev.id > cur) incoming[ev.deviceId] = ev.id;
+          }
+          await advanceWatermarks(incoming);
+        }
+        if (msg.done) {
+          receivedDone = true;
+          send(conn, { type: 'ack', applied: appliedCount });
+          await tryFinish();
+        }
+        return;
+      }
+
+      if (msg.type === 'ack') {
         ackReceived = true;
         await tryFinish();
         return;
       }
-      await tryFinish();
     } catch (err) {
       emit({
         type: 'error',
@@ -125,33 +158,30 @@ function attachProtocol(conn: DataConnection, emit: (e: SyncEvent) => void) {
     }
   });
 
-  conn.on('close', () => {
-    emit({ type: 'closed' });
-  });
-  conn.on('error', (err: Error) => {
-    emit({ type: 'error', message: err.message });
-  });
+  conn.on('close', () => emit({ type: 'closed' }));
+  conn.on('error', (err: Error) => emit({ type: 'error', message: err.message }));
 
-  // Open: send our hello first.
-  send(conn, {
-    type: 'hello',
-    deviceId: getDeviceId(),
-    appVersion: __APP_VERSION__,
-  });
-
-  // Reference theirDeviceId/recvCount somewhere so TS doesn't complain.
-  void theirDeviceId;
-  void recvCount;
+  // Send our hello first.
+  void (async () => {
+    const [watermarks, fp] = await Promise.all([computeLocalWatermarks(), fingerprint()]);
+    send(conn, {
+      type: 'hello',
+      deviceId: getDeviceId(),
+      appVersion: __APP_VERSION__,
+      watermarks,
+      fingerprint: fp,
+    });
+  })();
 }
 
-/**
- * Starts a sync session as the "host": creates a peer with the public
- * PeerJS broker and waits for the other side to connect using the assigned
- * peer ID (shown to the user as a QR / text code).
- */
-export function startHost(emit: (e: SyncEvent) => void): SyncSession {
+// ─── Public API ───────────────────────────────────────────────────────────
+
+export function startHost(
+  emit: (e: SyncEvent) => void,
+  opts: { peerId?: string } = {},
+): SyncSession {
   emit({ type: 'opening' });
-  const peer = new Peer({ debug: 0 });
+  const peer = opts.peerId ? new Peer(opts.peerId, { debug: 0 }) : new Peer({ debug: 0 });
   peer.on('open', (id) => emit({ type: 'peer-id', peerId: id }));
   peer.on('error', (err) =>
     emit({ type: 'error', message: err.message ?? String(err) }),
@@ -171,9 +201,6 @@ export function startHost(emit: (e: SyncEvent) => void): SyncSession {
   };
 }
 
-/**
- * Connects to a host using their peer ID.
- */
 export function connectToHost(
   peerId: string,
   emit: (e: SyncEvent) => void,
@@ -204,6 +231,17 @@ export function connectToHost(
       }
     },
   };
+}
+
+/**
+ * Builds a stable peer-id for this device so replicas can reconnect to the
+ * same broker entry without rescanning a QR every time.
+ */
+export function stablePeerIdForDevice(deviceId: string): string {
+  // PeerJS accepts ids with letters, numbers and a few separators. ULIDs
+  // already qualify, so we just prefix.
+  const clean = deviceId.replace(/[^a-zA-Z0-9]/g, '');
+  return `inventek-${clean}`.slice(0, 64);
 }
 
 declare const __APP_VERSION__: string;

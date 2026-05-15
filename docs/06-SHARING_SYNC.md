@@ -61,26 +61,98 @@ Dos dispositivos abren la app, eligen "Sync directo", uno muestra un código y e
 2. **Autoalojado**: cualquier PC, Raspberry Pi o VPS corriendo `npx peer --port 9000`. La app lo permite configurar en ajustes.
 3. **Conexión LAN** sin broker: si los dispositivos están en la misma red, se puede establecer la conexión con un intercambio QR del SDP (ICE local). Más manual pero **sin terceros**.
 
-### Protocolo de sync (CRDT-light)
+### Bitácora local de eventos
 
-Cada dispositivo mantiene una bitácora `syncEvents` por entidad:
+Cada dispositivo mantiene una tabla `syncEvents` poblada **dentro de la misma transacción** que cada mutación de dominio:
 
 ```
-{ id: ULID, deviceId, entity, entityId, op, payload, occurredAt }
+{ id: ULID monotónico, deviceId, entity, entityId, op: 'upsert', payload, occurredAt: ISO }
 ```
 
-Al sincronizar:
-1. **Handshake**: ambos intercambian su `deviceId` y "vector de versiones" (`lastSeenULID` por cada `deviceId` conocido).
-2. **Replay**: cada lado envía solo los eventos que el otro no tiene.
-3. **Aplicación**: cada evento es idempotente (op `upsert` por `entityId` o `delete`). Conflicto se resuelve con **last-write-wins por `occurredAt`** (timestamps en ULID + clock skew compensado por `deviceId`).
-4. **Compactación**: tras aplicar, se puede compactar la bitácora local (mantener solo último estado de cada entidad).
+Entidades sincronizables y qué viaja:
 
-> Esto **no** es un CRDT completo, pero es robusto para inventarios donde las ediciones simultáneas del mismo producto son raras. Las cantidades de stock se sincronizan por **eventos de movimiento** (que son inmutables y aditivos), no por el `quantity` final.
+| Entidad | Payload | Notas |
+|---|---|---|
+| `product` | entidad completa con `imageBlob` codificado base64 | LWW por `updatedAt`. |
+| `warehouse` | entidad completa | LWW por `updatedAt`. |
+| `movement` | `{ movement, lines }` | Inmutable: si el id ya existe localmente, se ignora. |
+| `stockLevelLimits` | `{ warehouseId, productId, minStock, maxStock, location, updatedAt }` | **No incluye `quantity`** — eso se recompone. |
+| `stockCount` | entidad completa | LWW por `updatedAt`. |
+| `setting` | `{ key, value, updatedAt }` | Solo keys que sean compartidas (p. ej. `sync.primary`). |
+
+Lo que **no** se sincroniza:
+- `stockLevels.quantity` — derivado de movimientos; se recomputa con `rebuildStockLevels` tras aplicar un batch que contenga eventos `movement`.
+- Settings locales como `inventek.theme`, `inventek.deviceId` o los watermarks.
+
+### Protocolo delta sync
+
+Implementado en `src/platform/p2pSync.ts`. Mensajes JSON sobre `DataConnection`:
+
+1. **`hello`** (ambos lados al abrir):
+   ```
+   { type: 'hello', deviceId, appVersion, watermarks, fingerprint }
+   ```
+   `watermarks: Record<deviceId, lastEventId>` indica hasta dónde he visto eventos de cada autor. `fingerprint` es `{ watermarks, eventCount }` para validar promociones de primario.
+
+2. **`events`** (cada lado, en lotes de ≤ 200):
+   ```
+   { type: 'events', events: SyncEvent[], done: boolean }
+   ```
+   El emisor calcula `eventsNewerThan(peer.watermarks)` y los manda. La bandera `done: true` en el último batch cierra la fase de envío.
+
+3. **`ack`** (al terminar de recibir todo):
+   ```
+   { type: 'ack', applied: number }
+   ```
+   Cuando uno ha terminado de mandar y el otro le ha hecho ack, ambos saben que la sesión terminó.
+
+4. **Al cerrar**: si se aplicó al menos un evento de tipo `movement`, se ejecuta `rebuildStockLevels` en cada extremo para que `stockLevels.quantity` quede coherente. Se graba el `sync.lastSyncAt` y se guarda la huella del peer en `sync.primaryFingerprint` (si era una sync con el primario o desde el primario) para futuras validaciones de promoción.
+
+### Aplicación idempotente
+
+`applyEvents(events)`:
+
+1. Filtra los eventos cuyo `id` ya está en la bitácora local.
+2. Abre una única transacción `rw` sobre todas las tablas afectadas + `syncEvents`.
+3. Para cada evento:
+   - Resuelve LWW comparando `updatedAt` local vs el del payload (gana el más reciente).
+   - Para `movement`: si ya existe el id, no se toca (son inmutables). Si no, se inserta el movement y todas sus lines.
+   - Persiste el `SyncEvent` original en la bitácora local con su `id` y `deviceId` originales, para que la próxima réplica que sincronice tampoco lo duplique.
+4. Avanza los watermarks locales por cada `deviceId` que apareció en el batch.
+
+### Topología primario / réplica
+
+Setting compartido (entidad `setting`, key `sync.primary`):
+
+```
+{ peerId, deviceId, updatedAt }
+```
+
+- `peerId` es **estable y derivable** desde el `deviceId` del primario (`inventek-<deviceIdSinSeparadores>`), así que las réplicas pueden reconectar sin volver a escanear QR.
+- El cambio de primario se hace con `setSelfAsPrimary()`, que emite un `SyncEvent` de `setting`. En el siguiente sync con cualquier réplica, esa réplica aprende quién es el nuevo primario y al reabrir la app se conectará a él en vez de al antiguo.
+
+**Promoción segura** (`canPromoteSelf()`):
+
+1. Lee la huella del primario actual (la que se guardó la última vez que sincronizamos con/desde él).
+2. Compara con la huella local. Coinciden ⇔ `eventCount` y `watermarks` por deviceId iguales.
+3. Si coinciden, el botón "Hacerme primario" está habilitado sin advertencia.
+4. Si no coinciden, ofrece "sincronizar primero". Si el primario está caído, se puede forzar la promoción asumiendo el aviso de "podrías perder cambios suyos si reaparece".
+
+**Autoreconexión** (en `SyncProvider`, al desbloquear la app):
+
+- Si el `sync.primary.deviceId` es el mío → soy primario → abro `startHost` con mi peer-id estable.
+- Si no → soy réplica → llamo `connectToHost(primary.peerId)` una vez.
+
+### Convergencia con 3+ dispositivos
+
+Los eventos solo viajan entre pares conectados, **en el momento** en que se conectan. Con topología en estrella (todas las réplicas sincronizan con el primario) todo el grupo converge tras una ronda de syncs réplica↔primario.
+
+Si A y B sincronizan, luego A y C, entonces C recibe lo de B "rebotado" por A, pero B aún no sabe de C hasta una nueva sync A↔B (o B↔C directa). En la práctica esto se resuelve solo gracias a la autoreconexión.
 
 ### Privacidad
 
-- Cada sesión P2P se aprueba manualmente en ambos lados (no hay descubrimiento automático).
-- Opcionalmente, se cifra el payload sobre WebRTC con una clave derivada de un PIN compartido (PAKE simplificado).
+- Cada sesión P2P se aprueba implícitamente al escanear el QR del peer-id o al estar configurada la autoreconexión al primario.
+- Los datos viajan cifrados por DTLS (default WebRTC). El broker de PeerJS nunca ve el contenido — solo los descriptores SDP/ICE.
 
 ## 4. WebDAV / Nextcloud propio (opcional)
 

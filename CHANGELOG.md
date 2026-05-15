@@ -5,6 +5,56 @@ Todas las versiones notables de Inventek.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
 y este proyecto adhiere a [Semantic Versioning](https://semver.org/lang/es/).
 
+## [1.1.0] — 2026-05-15
+
+Sincronización continua con bitácora de eventos y topología primario / réplica.
+
+### Añadido (Fase 7)
+
+#### Bitácora `syncEvents`
+- Cada use case que muta dominio (`createProduct`, `updateProduct`,
+  `createWarehouse`, `updateWarehouse`, `createMovement`, `setStockLimits`,
+  `startStockCount`, `incrementCount`, `setCountQuantity`,
+  `removeCountedItem`, `closeStockCount`, `cancelStockCount`,
+  `productRepo.remove`, `warehouseRepo.remove`) escribe un `SyncEvent`
+  dentro de la misma transacción Dexie que el cambio.
+- Entidades sincronizadas: `product` (con `imageBlob` en base64),
+  `warehouse`, `movement` (con sus `lines` en el payload, inmutable por
+  ULID), `stockLevelLimits` (solo `min/max/location` — la cantidad
+  no se sincroniza, se recomputa), `stockCount` y `setting`.
+
+#### Protocolo delta sync
+- `p2pSync` reescrito: `hello` con `deviceId + watermarks + fingerprint`,
+  intercambio de batches de eventos `done?`, `ack` final.
+- `applyEvents` idempotente: filtra por id ya conocido, aplica LWW por
+  `updatedAt`, persiste el evento original con `id` y `deviceId` del
+  autor. Tras aplicar movements, `rebuildStockLevels` recompone los
+  niveles.
+- `eventsNewerThan(peer.watermarks)` calcula qué deltas mandar.
+
+#### Topología primario / réplica
+- Setting compartido `sync.primary` con `peerId + deviceId + updatedAt`,
+  propagado como evento más → todas las réplicas aprenden quién es el
+  primario en su próxima sync.
+- Peer-id estable derivado del `deviceId` (`inventek-<ulid>`) para que
+  las réplicas reconecten sin volver a escanear QR.
+- Promoción con precondición de huella (`canPromoteSelf` /
+  `fingerprintsMatch`): solo se puede promover si el estado local
+  coincide exactamente con la huella registrada del primario.
+
+#### Autoreconexión y UI
+- `SyncProvider` que al desbloquear la app intenta una vez: el primario
+  abre listener, la réplica conecta al primario conocido.
+- Tile de estado en el dashboard: *Sincronizado / Sincronizando /
+  Sin conexión con primario / Soy primario · escuchando / Error*.
+- `/sync` rediseñada con tarjeta del primario actual, opción
+  "Reconectar al primario" y "Hacerme primario" con validación de huella.
+
+### Tests
+- 8 tests nuevos en `tests/syncEvents.test.ts`: emisión durante use
+  cases, idempotencia, LWW, watermarks, replay de un movement de otro
+  dispositivo, huellas iguales/distintas.
+
 ## [1.0.0] — 2026-05-13
 
 Primera release estable. Las seis fases del roadmap completas.

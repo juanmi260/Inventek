@@ -23,7 +23,7 @@
 - **Repository pattern** sobre Dexie: la lógica de dominio depende de interfaces (`ProductRepository`, `MovementRepository`…), no del ORM.
 - **Casos de uso** explícitos: `CreateMovement`, `TransferStock`, `CloseStockCount`, etc. Cada uno es una función pura que recibe repositorios y datos y devuelve un resultado tipado.
 - **Inmutabilidad**: los movimientos confirmados no se editan; se crean movimientos de reversa.
-- **Event log opcional**: cada cambio relevante puede registrar un evento (útil para el sync P2P, ver doc 06).
+- **Event log siempre activo** (Fase 7): cada use case que muta dominio escribe un `SyncEvent` en `db.syncEvents` **dentro de la misma transacción Dexie** que el cambio. Los helpers están en `src/domain/use-cases/syncEvents.ts` (`buildXxxEvent`, `appendEvent`, `applyEvents`, `computeLocalWatermarks`, `eventsNewerThan`, `fingerprint`). Detalles del protocolo en doc 06.
 
 ## Estructura de carpetas
 

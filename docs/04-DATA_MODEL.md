@@ -148,14 +148,20 @@ Clave-valor simple.
 { key: string, value: unknown, updatedAt }
 ```
 
-### SyncEvent (para sync P2P, ver doc 06)
+### SyncEvent (poblado por todos los use cases mutadores; ver doc 06)
 ```ts
 {
-  id: ULID,                 // monotónico por dispositivo
+  id: ULID,                 // monotónico por dispositivo (newId() de utils/ulid)
   deviceId: string,         // identificador local del dispositivo
-  entity: string,           // 'product' | 'movement' | ...
-  entityId: ULID,
-  op: 'upsert' | 'delete',
+  entity:
+    | 'product'
+    | 'warehouse'
+    | 'movement'
+    | 'stockLevelLimits'    // solo min/max/location — NO la cantidad
+    | 'stockCount'
+    | 'setting',
+  entityId: ULID | string,
+  op: 'upsert',             // 'delete' no se usa: los borrados son soft-delete (upsert con deletedAt)
   payload: unknown,         // estado completo de la entidad tras la op
   occurredAt: string
 }
