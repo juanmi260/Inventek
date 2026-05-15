@@ -11,6 +11,7 @@ import {
 import {
   connectToHost,
   startHost,
+  stablePeerIdForDevice,
   type SyncEvent,
   type SyncSession,
 } from '@/platform/p2pSync';
@@ -33,6 +34,7 @@ export type SyncPhase =
   | 'connected'
   | 'syncing'
   | 'done'
+  | 'peer-unavailable'
   | 'error';
 
 export interface SyncProgress {
@@ -42,6 +44,7 @@ export interface SyncProgress {
   sent: number;
   received: number;
   applied: number;
+  byEntity: Record<string, number>;
   errorMessage?: string;
 }
 
@@ -50,6 +53,7 @@ const INITIAL: SyncProgress = {
   sent: 0,
   received: 0,
   applied: 0,
+  byEntity: {},
 };
 
 interface Ctx {
@@ -61,6 +65,18 @@ interface Ctx {
   startHostMode: () => void;
   connect: (peerId: string) => void;
   cancel: () => void;
+  /**
+   * Convenience: if this device knows about a primary, connect to it; if this
+   * device is the primary, open the listener. Used by both the auto-pair flow
+   * and the manual "Sincronizar ahora" button.
+   */
+  syncWithPrimary: () => Promise<boolean>;
+  /**
+   * Forces the host listener to be (re)started with the current peer-id.
+   * Use after promoting this device to primary, so replicas can find it via
+   * the new stable peer-id immediately.
+   */
+  restartHost: () => Promise<void>;
   /** Reload primary info from settings (after a sync). */
   refresh: () => Promise<void>;
 }
@@ -73,6 +89,10 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   const [isHost, setIsHost] = useState(false);
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const sessionRef = useRef<SyncSession | null>(null);
+  // Track the current session's role so cancel() and reconnect logic can
+  // decide whether to keep the listener alive or fully destroy.
+  const sessionModeRef = useRef<'idle' | 'host' | 'guest'>('idle');
+  const hostPeerIdRef = useRef<string | null>(null);
   const { locked, hasPin } = useLock();
   const autoTriedRef = useRef(false);
 
@@ -102,9 +122,19 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       } else if (e.type === 'sending') {
         setProgress((p) => ({ ...p, sent: e.count }));
       } else if (e.type === 'receiving') {
-        setProgress((p) => ({ ...p, received: e.count, applied: e.applied }));
+        setProgress((p) => ({
+          ...p,
+          received: e.count,
+          applied: e.applied,
+          byEntity: e.byEntity,
+        }));
       } else if (e.type === 'done') {
-        setProgress((p) => ({ ...p, phase: 'done' }));
+        setProgress((p) => ({
+          ...p,
+          phase: 'done',
+          applied: e.applied,
+          byEntity: e.byEntity,
+        }));
         void (async () => {
           // If we just synced with the primary (or *we are* the primary syncing
           // with a replica), record the fingerprint so future promotion checks
@@ -113,62 +143,138 @@ export function SyncProvider({ children }: { children: ReactNode }) {
           await markSyncCompleted();
           await refresh();
         })();
+      } else if (e.type === 'peer-unavailable') {
+        // The primary isn't on the broker (likely: app not open). This is a
+        // normal expected state, not an error. Tile in dashboard shows "Sin
+        // conexión con el primario"; we don't toast.
+        setProgress((p) => ({ ...p, phase: 'peer-unavailable' }));
       } else if (e.type === 'error') {
         setProgress((p) => ({ ...p, phase: 'error', errorMessage: e.message }));
       } else if (e.type === 'closed') {
         // Connection closed; if we're not in error/done yet, treat as graceful end.
-        setProgress((p) => (p.phase === 'done' || p.phase === 'error' ? p : { ...p, phase: 'idle' }));
+        setProgress((p) =>
+          p.phase === 'done' || p.phase === 'error' || p.phase === 'peer-unavailable'
+            ? p
+            : { ...p, phase: 'idle' },
+        );
       }
     },
     [refresh],
   );
 
-  const cancel = useCallback(() => {
+  const destroySession = useCallback(() => {
     sessionRef.current?.destroy();
     sessionRef.current = null;
-    setProgress(INITIAL);
+    sessionModeRef.current = 'idle';
+    hostPeerIdRef.current = null;
   }, []);
 
+  const cancel = useCallback(() => {
+    // The primary's listener must stay alive across UI dismissals so replicas
+    // can keep finding it. Cancel only resets the visible progress state.
+    if (sessionModeRef.current === 'host') {
+      setProgress((p) => ({
+        ...INITIAL,
+        // Preserve the peerId so the dashboard tile and /sync can still show
+        // "Eres el primario · escuchando" instead of going blank.
+        peerId: hostPeerIdRef.current ?? p.peerId,
+      }));
+      return;
+    }
+    destroySession();
+    setProgress(INITIAL);
+  }, [destroySession]);
+
   const startHostMode = useCallback(async () => {
-    cancel();
     const host = await isPrimary();
-    const peerId = host ? (await import('@/platform/p2pSync')).stablePeerIdForDevice(getDeviceId()) : undefined;
+    const desiredPeerId = host ? stablePeerIdForDevice(getDeviceId()) : undefined;
+    // If we're already hosting and the desired peer-id matches what we're
+    // listening on, do nothing (idempotent).
+    if (
+      sessionRef.current &&
+      sessionModeRef.current === 'host' &&
+      (!desiredPeerId || hostPeerIdRef.current === desiredPeerId)
+    ) {
+      return;
+    }
+    destroySession();
+    hostPeerIdRef.current = desiredPeerId ?? null;
     setProgress({ ...INITIAL, phase: 'opening' });
-    sessionRef.current = startHost(handleEvent, peerId ? { peerId } : {});
-  }, [cancel, handleEvent]);
+    sessionRef.current = startHost(
+      (e) => {
+        // Capture the actually-assigned peer-id (matters when desiredPeerId
+        // is undefined and the broker picked a random one).
+        if (e.type === 'peer-id') hostPeerIdRef.current = e.peerId;
+        handleEvent(e);
+      },
+      desiredPeerId ? { peerId: desiredPeerId } : {},
+    );
+    sessionModeRef.current = 'host';
+  }, [destroySession, handleEvent]);
 
   const connect = useCallback(
     (peerId: string) => {
-      cancel();
+      destroySession();
       setProgress({ ...INITIAL, phase: 'opening' });
       sessionRef.current = connectToHost(peerId, handleEvent);
+      sessionModeRef.current = 'guest';
     },
-    [cancel, handleEvent],
+    [destroySession, handleEvent],
   );
 
-  // Auto-pair: when the app opens (unlocked), if this device is a replica
-  // and has a recorded primary, attempt to connect once.
+  const syncWithPrimary = useCallback(async () => {
+    const p = await getPrimary();
+    const me = getDeviceId();
+    if (!p) return false;
+    if (p.deviceId === me) {
+      void startHostMode();
+    } else {
+      connect(p.peerId);
+    }
+    return true;
+  }, [startHostMode, connect]);
+
+  const restartHost = useCallback(async () => {
+    destroySession();
+    await startHostMode();
+  }, [destroySession, startHostMode]);
+
+  // Auto-pair: when the app opens (unlocked), if this device knows about a
+  // primary, attempt to connect once. On replica side, a "peer-unavailable"
+  // outcome is fine — it just means the primary isn't online right now and
+  // the user can retry manually from /sync or the dashboard tile.
   useEffect(() => {
     if (locked && hasPin) return;
     if (autoTriedRef.current) return;
     autoTriedRef.current = true;
-    void (async () => {
-      const p = await getPrimary();
-      const me = getDeviceId();
-      if (!p) return;
-      if (p.deviceId === me) {
-        // I'm the primary — open my listener so replicas can find me.
-        startHostMode();
-      } else {
-        // I'm a replica — try to connect to the primary once.
-        connect(p.peerId);
-      }
-    })();
-  }, [locked, hasPin, startHostMode, connect]);
+    void syncWithPrimary();
+  }, [locked, hasPin, syncWithPrimary]);
 
   const value = useMemo<Ctx>(
-    () => ({ progress, primary, isHost, lastSyncAt, startHostMode, connect, cancel, refresh }),
-    [progress, primary, isHost, lastSyncAt, startHostMode, connect, cancel, refresh],
+    () => ({
+      progress,
+      primary,
+      isHost,
+      lastSyncAt,
+      startHostMode,
+      connect,
+      cancel,
+      syncWithPrimary,
+      restartHost,
+      refresh,
+    }),
+    [
+      progress,
+      primary,
+      isHost,
+      lastSyncAt,
+      startHostMode,
+      connect,
+      cancel,
+      syncWithPrimary,
+      restartHost,
+      refresh,
+    ],
   );
 
   return <Ctx2.Provider value={value}>{children}</Ctx2.Provider>;

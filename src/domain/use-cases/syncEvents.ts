@@ -175,6 +175,7 @@ export async function appendEvent(event: SyncEvent, tx?: Transaction): Promise<v
 export interface ApplyResult {
   applied: number;
   movementsTouched: number;
+  byEntity: Record<string, number>;
   errors: string[];
 }
 
@@ -184,7 +185,7 @@ export interface ApplyResult {
  * rebuildStockLevels() if movementsTouched > 0.
  */
 export async function applyEvents(events: SyncEvent[]): Promise<ApplyResult> {
-  const result: ApplyResult = { applied: 0, movementsTouched: 0, errors: [] };
+  const result: ApplyResult = { applied: 0, movementsTouched: 0, byEntity: {}, errors: [] };
   if (events.length === 0) return result;
 
   // Determine which events are new.
@@ -211,6 +212,7 @@ export async function applyEvents(events: SyncEvent[]): Promise<ApplyResult> {
           await applyOne(ev);
           await db.syncEvents.put(ev);
           result.applied += 1;
+          result.byEntity[ev.entity] = (result.byEntity[ev.entity] ?? 0) + 1;
           if (ev.entity === 'movement') result.movementsTouched += 1;
         } catch (err) {
           result.errors.push(`${ev.entity}/${ev.entityId}: ${(err as Error).message}`);

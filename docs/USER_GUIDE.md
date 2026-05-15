@@ -148,10 +148,13 @@ en cuanto abren la app.
 - **Hacerme primario**: botón en /sync. Si tu copia local coincide con
   la huella del primario actual (mismo número y orden de eventos),
   puedes promoverte sin riesgo. Si no coincide, te avisará y tendrás
-  que sincronizar primero.
+  que sincronizar primero. Al promover, el dispositivo **reinicia
+  inmediatamente su listener** con un peer-id estable, así que las
+  réplicas pueden encontrarlo al instante.
 - **Quién es el primario** es un dato sincronizado: en cuanto alguien se
-  promociona, todas las réplicas reciben el cambio en el siguiente sync
-  y redirigen sus reconexiones automáticamente.
+  promociona, sincroniza una vez más con cada réplica para que reciban
+  el cambio. A partir de ahí, **todas las réplicas redirigen sus
+  reconexiones automáticamente** al nuevo primario.
 - **Peer-id estable**: cada dispositivo tiene un identificador derivado
   de su `deviceId` (visible en Acerca de). Las réplicas recuerdan el del
   primario y reconectan **sin escanear QR** cada vez que abren la app.

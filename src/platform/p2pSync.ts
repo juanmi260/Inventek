@@ -19,8 +19,16 @@ export type SyncEvent =
   | { type: 'connected'; otherDeviceId: string }
   | { type: 'exchanging-watermarks' }
   | { type: 'sending'; count: number }
-  | { type: 'receiving'; count: number; applied: number }
-  | { type: 'done'; sent: number; received: number; otherFingerprint: Fingerprint }
+  | { type: 'receiving'; count: number; applied: number; byEntity: Record<string, number> }
+  | {
+      type: 'done';
+      sent: number;
+      received: number;
+      applied: number;
+      byEntity: Record<string, number>;
+      otherFingerprint: Fingerprint;
+    }
+  | { type: 'peer-unavailable'; peerId: string }
   | { type: 'error'; message: string }
   | { type: 'closed' };
 
@@ -69,11 +77,15 @@ function attachProtocol(conn: DataConnection, emit: (e: SyncEvent) => void) {
   let sentCount = 0;
   let receivedCount = 0;
   let appliedCount = 0;
-  let anyMovementApplied = false;
+  let receivedByEntity: Record<string, number> = {};
+  let anyDataApplied = false;
 
   const tryFinish = async () => {
     if (sentDone && receivedDone && ackReceived) {
-      if (anyMovementApplied) {
+      // Rebuild stock whenever we received *anything* — movement events
+      // change quantities and stockLevelLimits events change min/max/location
+      // (and we need to re-apply quantity preservation). Cheap on small DBs.
+      if (anyDataApplied) {
         try {
           await rebuildStockLevels();
         } catch (e) {
@@ -85,6 +97,8 @@ function attachProtocol(conn: DataConnection, emit: (e: SyncEvent) => void) {
         type: 'done',
         sent: sentCount,
         received: receivedCount,
+        applied: appliedCount,
+        byEntity: receivedByEntity,
         otherFingerprint: peerFingerprint ?? { watermarks: {}, eventCount: 0 },
       });
       setTimeout(() => conn.close(), 300);
@@ -127,8 +141,16 @@ function attachProtocol(conn: DataConnection, emit: (e: SyncEvent) => void) {
           const result = await applyEvents(msg.events);
           appliedCount += result.applied;
           receivedCount += msg.events.length;
-          if (result.movementsTouched > 0) anyMovementApplied = true;
-          emit({ type: 'receiving', count: receivedCount, applied: appliedCount });
+          if (result.applied > 0) anyDataApplied = true;
+          for (const [k, v] of Object.entries(result.byEntity)) {
+            receivedByEntity[k] = (receivedByEntity[k] ?? 0) + v;
+          }
+          emit({
+            type: 'receiving',
+            count: receivedCount,
+            applied: appliedCount,
+            byEntity: { ...receivedByEntity },
+          });
           // Advance our watermarks to the highest id per device in this batch.
           const incoming: Watermarks = {};
           for (const ev of msg.events) {
@@ -183,9 +205,27 @@ export function startHost(
   emit({ type: 'opening' });
   const peer = opts.peerId ? new Peer(opts.peerId, { debug: 0 }) : new Peer({ debug: 0 });
   peer.on('open', (id) => emit({ type: 'peer-id', peerId: id }));
-  peer.on('error', (err) =>
-    emit({ type: 'error', message: err.message ?? String(err) }),
-  );
+  peer.on('error', (err: Error & { type?: string }) => {
+    const msg = err.message ?? String(err);
+    // 'unavailable-id' is what PeerJS reports if our chosen peer-id is still
+    // claimed on the broker by a previous instance. Surface softly so the UI
+    // can offer a retry without scaring the user.
+    if (err.type === 'unavailable-id') {
+      emit({ type: 'peer-unavailable', peerId: opts.peerId ?? '?' });
+    } else {
+      emit({ type: 'error', message: msg });
+    }
+  });
+  // The PeerJS WebSocket can be dropped by the broker after a period of
+  // inactivity (or a network blip). Reconnect transparently so the primary
+  // remains discoverable for replicas as long as the app is open.
+  peer.on('disconnected', () => {
+    try {
+      peer.reconnect();
+    } catch {
+      // ignore
+    }
+  });
   peer.on('connection', (conn) => {
     conn.on('open', () => attachProtocol(conn, emit));
     conn.on('error', (err) => emit({ type: 'error', message: err.message }));
@@ -214,9 +254,17 @@ export function connectToHost(
     conn.on('open', () => attachProtocol(conn!, emit));
     conn.on('error', (err) => emit({ type: 'error', message: err.message }));
   });
-  peer.on('error', (err) =>
-    emit({ type: 'error', message: err.message ?? String(err) }),
-  );
+  peer.on('error', (err: Error & { type?: string }) => {
+    // "peer-unavailable" is what PeerJS reports when the broker doesn't know
+    // about the target id (typically: the primary doesn't have the app open).
+    // It's not an error from the user's perspective — surface it softly.
+    const msg = err.message ?? String(err);
+    if (err.type === 'peer-unavailable' || /could not connect to peer/i.test(msg)) {
+      emit({ type: 'peer-unavailable', peerId });
+    } else {
+      emit({ type: 'error', message: msg });
+    }
+  });
   return {
     destroy: () => {
       try {

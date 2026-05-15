@@ -93,6 +93,10 @@ export default function SyncPage() {
   const doPromote = async () => {
     const info = await setSelfAsPrimary();
     await sync.refresh();
+    // Restart the local listener with the stable peer-id so replicas can find
+    // us straight away. Without this, the device would keep listening on the
+    // random peer-id from the first pairing.
+    await sync.restartHost();
     showToast({ title: 'Eres el primario', description: info.peerId, variant: 'success' });
     setPromoteOpen(false);
   };
@@ -104,45 +108,49 @@ export default function SyncPage() {
       <div className="space-y-3 px-3">
         <PrimaryStatusCard />
 
-        {sync.progress.phase === 'idle' && (
-          <>
-            <OptionCard
-              icon={<QrCode size={24} />}
-              title={sync.isHost ? 'Modo primario · escuchando' : 'Mostrar mi código'}
-              description="Muestra un QR para que otro dispositivo lo escanee y se conecte."
-              onClick={sync.startHostMode}
-            />
-            <OptionCard
-              icon={<ScanLine size={24} />}
-              title="Conectar a otro dispositivo"
-              description="Escanea el QR del otro dispositivo o pega su código."
-              onClick={() => setShowConnect(true)}
-            />
-            {sync.primary && sync.primary.deviceId !== getDeviceIdSafe() && (
-              <OptionCard
-                icon={<RefreshCw size={24} />}
-                title="Sincronizar con el primario"
-                description={`Reconecta con ${sync.primary.peerId}.`}
-                onClick={() => sync.connect(sync.primary!.peerId)}
-              />
-            )}
-            <button
-              type="button"
-              onClick={tryPromote}
-              className="flex w-full items-center gap-3 rounded border border-dashed border-border p-3 text-left text-sm hover:bg-surface"
-            >
-              <Crown size={18} className="text-muted" />
-              <span className="flex-1">
-                {sync.isHost ? 'Ya eres el primario' : 'Hacerme primario'}
-              </span>
-              {!sync.isHost && <ChevronRight size={16} className="text-muted" />}
-            </button>
-          </>
-        )}
+        {/* SessionView shows the banner + stats whenever there's something to
+            report (anything other than fully idle). */}
+        {sync.progress.phase !== 'idle' && <SessionView qrUrl={qrUrl} />}
 
-        {sync.progress.phase !== 'idle' && (
-          <SessionView qrUrl={qrUrl} />
-        )}
+        {/* Action options always available except during an in-flight sync. */}
+        {sync.progress.phase !== 'opening' &&
+          sync.progress.phase !== 'connecting' &&
+          sync.progress.phase !== 'connected' &&
+          sync.progress.phase !== 'syncing' && (
+            <>
+              {sync.primary && sync.primary.deviceId !== getDeviceIdSafe() && (
+                <OptionCard
+                  icon={<RefreshCw size={24} />}
+                  title="Sincronizar ahora con el primario"
+                  description={`Reconecta con ${sync.primary.peerId}.`}
+                  onClick={() => sync.connect(sync.primary!.peerId)}
+                />
+              )}
+              <OptionCard
+                icon={<QrCode size={24} />}
+                title={sync.isHost ? 'Modo primario · escuchando' : 'Mostrar mi código'}
+                description="Muestra un QR para que otro dispositivo lo escanee y se conecte."
+                onClick={sync.startHostMode}
+              />
+              <OptionCard
+                icon={<ScanLine size={24} />}
+                title="Conectar a otro dispositivo"
+                description="Escanea el QR del otro dispositivo o pega su código."
+                onClick={() => setShowConnect(true)}
+              />
+              <button
+                type="button"
+                onClick={tryPromote}
+                className="flex w-full items-center gap-3 rounded border border-dashed border-border p-3 text-left text-sm hover:bg-surface"
+              >
+                <Crown size={18} className="text-muted" />
+                <span className="flex-1">
+                  {sync.isHost ? 'Ya eres el primario' : 'Hacerme primario'}
+                </span>
+                {!sync.isHost && <ChevronRight size={16} className="text-muted" />}
+              </button>
+            </>
+          )}
       </div>
 
       <Sheet
@@ -318,6 +326,22 @@ function SessionView({ qrUrl }: { qrUrl: string | null }) {
             <Stat label="Enviados" value={String(progress.sent)} />
             <Stat label="Recibidos" value={String(progress.received)} />
           </div>
+          {progress.applied > 0 && (
+            <div className="mt-2 text-xs text-muted">
+              <span className="font-medium text-text">
+                {progress.applied} cambio{progress.applied === 1 ? '' : 's'} aplicado
+                {progress.applied === 1 ? '' : 's'}
+              </span>
+              {Object.keys(progress.byEntity).length > 0 && (
+                <>
+                  {': '}
+                  {Object.entries(progress.byEntity)
+                    .map(([k, v]) => `${v} ${ENTITY_LABEL[k] ?? k}`)
+                    .join(' · ')}
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -338,6 +362,20 @@ function StatusBanner({ phase, message }: { phase: string; message?: string }) {
         <div className="min-w-0 text-sm">
           <div className="font-medium">Error de sincronización</div>
           {message && <div className="break-words text-xs text-muted">{message}</div>}
+        </div>
+      </div>
+    );
+  }
+  if (phase === 'peer-unavailable') {
+    return (
+      <div className="flex items-start gap-2 rounded border border-warning/40 bg-warning/5 p-3">
+        <AlertTriangle size={18} className="mt-0.5 flex-shrink-0 text-warning" />
+        <div className="min-w-0 text-sm">
+          <div className="font-medium">Primario no disponible</div>
+          <div className="text-xs text-muted">
+            El otro dispositivo no tiene la app abierta o no está en la red. Vuelve a intentarlo
+            cuando esté online.
+          </div>
         </div>
       </div>
     );
@@ -367,6 +405,15 @@ function StatusBanner({ phase, message }: { phase: string; message?: string }) {
     </div>
   );
 }
+
+const ENTITY_LABEL: Record<string, string> = {
+  product: 'productos',
+  warehouse: 'almacenes',
+  movement: 'movimientos',
+  stockLevelLimits: 'mín/máx',
+  stockCount: 'recuentos',
+  setting: 'ajustes',
+};
 
 function OptionCard({
   icon,

@@ -5,6 +5,43 @@ Todas las versiones notables de Inventek.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
 y este proyecto adhiere a [Semantic Versioning](https://semver.org/lang/es/).
 
+## [1.1.1] — 2026-05-15
+
+Fixes tras el primer test del flujo de sync continua.
+
+### Corregido
+- **Tras promover un dispositivo a primario, el Peer se reinicia con el
+  peer-id estable.** Antes, el dispositivo se quedaba escuchando con el
+  peer-id aleatorio del primer emparejamiento, así que las réplicas que
+  intentaban reconectar al primario buscaban `inventek-<ulid>` y nadie
+  estaba escuchando ahí. Ahora la promoción dispara un `restartHost()`
+  que recarga el listener con el id correcto.
+- **`rebuildStockLevels` preserva `minStock`/`maxStock`/`location`.**
+  Antes, el rebuild hacía `clear()` y los perdía: si una réplica
+  recibía un evento `stockLevelLimits` y luego se reconstruía el stock,
+  esos límites desaparecían.
+- **Tras aplicar eventos, el rebuild de stock corre siempre que haya
+  cambios** (no solo cuando llegan movimientos). Así los cambios de
+  límites también se reflejan correctamente en la fila de stock.
+
+### Mejorado
+- El error `Could not connect to peer …` se trata como un **estado
+  suave "peer-unavailable"** (el primario no tiene la app abierta), no
+  como error duro. El tile del dashboard muestra "Primario fuera de
+  línea" y en `/sync` aparece un aviso amarillo, no rojo.
+- **El listener del primario es persistente**: si pulsas "Cancelar" en
+  `/sync` mientras estás esperando una réplica, ya no se destruye el
+  Peer — solo se oculta la UI. El primario sigue escuchando hasta que
+  se cierra la app.
+- Si abres `/sync` y ya estás escuchando con el peer-id correcto, no
+  se reinicia el listener (idempotente).
+- **Reconexión automática al broker** (`peer.on('disconnected')`) por
+  si la WebSocket cae después de un período largo abierto.
+- La UI de `/sync` muestra ahora el **detalle por entidad** tras un sync:
+  *"3 cambios aplicados: 2 productos · 1 movimiento"*.
+- Botón **"Sincronizar ahora con el primario"** siempre visible cuando
+  hay primario configurado y la app no está sincronizando.
+
 ## [1.1.0] — 2026-05-15
 
 Sincronización continua con bitácora de eventos y topología primario / réplica.

@@ -170,7 +170,7 @@ function SyncStatusTile() {
   const sync = useSync();
   const { phase, errorMessage } = sync.progress;
   let icon: React.ReactNode = <WifiOff size={20} />;
-  let label = 'Sin conexión con primario';
+  let label = 'Sin conexión con el primario';
   let className = 'border-border';
   let to = '/sync';
   if (sync.isHost) {
@@ -185,6 +185,10 @@ function SyncStatusTile() {
     icon = <Loader2 size={20} className="animate-spin text-primary" />;
     label = 'Sincronizando…';
     className = 'border-primary/30 bg-primary/5';
+  } else if (phase === 'peer-unavailable') {
+    icon = <WifiOff size={20} className="text-muted" />;
+    label = 'Primario fuera de línea';
+    className = 'border-border bg-surface';
   } else if (phase === 'error') {
     icon = <AlertTriangle size={20} className="text-danger" />;
     label = `Error: ${errorMessage ?? 'no se pudo conectar'}`;

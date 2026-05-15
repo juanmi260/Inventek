@@ -5,7 +5,10 @@ import type { StockLevel } from '../entities';
 
 /**
  * Recomputes all stockLevels by replaying every confirmed movement.
- * Use it as a recovery operation after import or when inconsistencies are suspected.
+ *
+ * Preserves the policy fields (min/max/location/id) per (warehouseId, productId)
+ * if a row already exists — those are user-set / synced via `stockLevelLimits`
+ * events and must NOT be lost when the quantity is recomputed.
  */
 export async function rebuildStockLevels(): Promise<{ touched: number }> {
   return db.transaction(
@@ -14,10 +17,16 @@ export async function rebuildStockLevels(): Promise<{ touched: number }> {
     db.movementLines,
     db.stockLevels,
     async () => {
-      await db.stockLevels.clear();
+      // 1. Snapshot existing rows so we can preserve their policy fields.
+      const existing = await db.stockLevels.toArray();
+      const byKey = new Map<string, StockLevel>();
+      for (const lvl of existing) {
+        byKey.set(`${lvl.warehouseId}:${lvl.productId}`, lvl);
+      }
 
+      // 2. Aggregate quantities from confirmed movements.
       const movements = await db.movements.orderBy('occurredAt').toArray();
-      const totals = new Map<string, number>(); // key: warehouseId:productId
+      const totals = new Map<string, number>();
       const lastMov = new Map<string, string>();
 
       for (const m of movements) {
@@ -39,19 +48,30 @@ export async function rebuildStockLevels(): Promise<{ touched: number }> {
         }
       }
 
+      // 3. Build the union of keys (existing limits + computed quantities).
+      const keys = new Set<string>([...byKey.keys(), ...totals.keys()]);
       const now = nowIso();
       const levels: StockLevel[] = [];
-      for (const [key, qty] of totals) {
+      for (const key of keys) {
         const [warehouseId, productId] = key.split(':') as [string, string];
+        const prev = byKey.get(key);
+        const qty = totals.get(key) ?? 0;
         levels.push({
-          id: newId(),
+          id: prev?.id ?? newId(),
           warehouseId,
           productId,
           quantity: qty,
-          lastMovementAt: lastMov.get(key),
+          lastMovementAt: lastMov.get(key) ?? prev?.lastMovementAt,
+          minStock: prev?.minStock,
+          maxStock: prev?.maxStock,
+          location: prev?.location,
           updatedAt: now,
         });
       }
+
+      // 4. Replace the table contents in one batch. clear() + bulkPut() is fast
+      // in Dexie and atomic within the transaction.
+      await db.stockLevels.clear();
       await db.stockLevels.bulkPut(levels);
       return { touched: levels.length };
     },
