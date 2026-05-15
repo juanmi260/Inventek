@@ -143,6 +143,14 @@ Setting compartido (entidad `setting`, key `sync.primary`):
 - Si el `sync.primary.deviceId` es el mío → soy primario → abro `startHost` con mi peer-id estable.
 - Si no → soy réplica → llamo `connectToHost(primary.peerId)` una vez.
 
+**Auto-sync debounced** (Fase 7.2):
+
+Tras la primera conexión, la sesión se cierra. Para que cambios posteriores se propaguen sin pulsar nada, hay un hook Dexie sobre `syncEvents` que detecta inserciones con `deviceId === local` (descarta eventos aplicados desde un remoto) y programa una sincronización 2 segundos después. El temporizador se reinicia con cada nuevo evento, así que una ráfaga (p. ej. una entrada con varias líneas) genera un único sync al final.
+
+Si una sincronización ya está en marcha (`phase` ∈ {opening, connecting, connected, syncing}), el temporizador no dispara — se respeta la que esté en curso y el siguiente cambio reintentará.
+
+**Asimetría conocida**: los cambios hechos en el primario no se empujan a las réplicas. Las réplicas tiran (pull) en cuanto hacen su propio cambio, cuando reabren la app o cuando el usuario toca "Sincronizar ahora". Un push activo desde el primario requeriría que el primario recordara los peer-ids de las réplicas vistas y las llamara de vuelta — pendiente para una iteración posterior.
+
 ### Convergencia con 3+ dispositivos
 
 Los eventos solo viajan entre pares conectados, **en el momento** en que se conectan. Con topología en estrella (todas las réplicas sincronizan con el primario) todo el grupo converge tras una ronda de syncs réplica↔primario.

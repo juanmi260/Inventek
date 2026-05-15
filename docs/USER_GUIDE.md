@@ -164,8 +164,26 @@ en cuanto abren la app.
 Si tu dispositivo es **réplica** y conoce al primario, al desbloquear
 la app intenta sincronizar una vez automáticamente. Si tu dispositivo
 es **primario**, abre escucha en el broker para que las réplicas te
-encuentren. El estado se ve en el **tile de sincronización del
-dashboard**:
+encuentren.
+
+### Auto-sync tras cada cambio
+
+Cuando haces cualquier cambio en la réplica (un movimiento, alta,
+recuento…) Inventek **espera 2 segundos** y dispara una sincronización
+con el primario automáticamente. Si durante esos 2 segundos haces más
+cambios (típico al meter una entrada con varias líneas), el temporizador
+se reinicia y al final se manda todo en un único sync.
+
+Es decir: una pequeña ráfaga de cambios viaja como un único paquete a
+los pocos segundos del último click, sin que tengas que tocar nada.
+
+Limitación a tener clara: **los cambios hechos en el primario no se
+empujan automáticamente a las réplicas**. Para verlos en una réplica
+debes (a) hacer algún cambio tú en la réplica (lo que provocará un
+auto-sync que también arrastra lo del primario), (b) cerrar y reabrir
+la app de la réplica, o (c) tocar "Sincronizar ahora con el primario".
+
+El estado se ve en el **tile de sincronización del dashboard**:
 
 - 🟢 *Sincronizado con el primario* — todo al día.
 - 🔄 *Sincronizando…* — intercambiando deltas ahora.

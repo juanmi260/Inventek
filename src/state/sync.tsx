@@ -24,7 +24,11 @@ import {
   type PrimaryInfo,
 } from '@/domain/use-cases/primary';
 import { getDeviceId } from '@/platform/device';
+import { db } from '@/data/db';
+import type { SyncEvent as DomainSyncEvent } from '@/domain/entities';
 import { useLock } from './lock';
+
+const AUTO_SYNC_DEBOUNCE_MS = 2000;
 
 export type SyncPhase =
   | 'idle'
@@ -93,8 +97,12 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   // decide whether to keep the listener alive or fully destroy.
   const sessionModeRef = useRef<'idle' | 'host' | 'guest'>('idle');
   const hostPeerIdRef = useRef<string | null>(null);
+  const progressRef = useRef(progress);
+  progressRef.current = progress;
   const { locked, hasPin } = useLock();
   const autoTriedRef = useRef(false);
+  const lockedRef = useRef(locked);
+  lockedRef.current = locked;
 
   const refresh = useCallback(async () => {
     const [p, host, last] = await Promise.all([getPrimary(), isPrimary(), getLastSyncAt()]);
@@ -249,6 +257,49 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     autoTriedRef.current = true;
     void syncWithPrimary();
   }, [locked, hasPin, syncWithPrimary]);
+
+  // Auto-sync (debounced): after a local change is recorded in syncEvents,
+  // wait AUTO_SYNC_DEBOUNCE_MS for any further changes and then trigger a
+  // sync with the primary. Remote events applied via applyEvents have a
+  // foreign deviceId and are filtered out so they don't cause loops.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const localDeviceId = getDeviceId();
+
+    const triggerNow = () => {
+      timer = null;
+      if (lockedRef.current) return;
+      const phase = progressRef.current.phase;
+      if (
+        phase === 'opening' ||
+        phase === 'connecting' ||
+        phase === 'connected' ||
+        phase === 'syncing'
+      ) {
+        // A sync is already in flight; let it finish.
+        return;
+      }
+      void syncWithPrimary();
+    };
+
+    const schedule = () => {
+      if (timer != null) clearTimeout(timer);
+      timer = setTimeout(triggerNow, AUTO_SYNC_DEBOUNCE_MS);
+    };
+
+    const hook = (_primKey: unknown, obj: DomainSyncEvent) => {
+      // The hook fires inside the transaction; defer scheduling so we don't
+      // race with the transaction commit.
+      if (obj.deviceId !== localDeviceId) return;
+      setTimeout(schedule, 0);
+    };
+
+    db.syncEvents.hook('creating', hook);
+    return () => {
+      if (timer != null) clearTimeout(timer);
+      db.syncEvents.hook('creating').unsubscribe(hook);
+    };
+  }, [syncWithPrimary]);
 
   const value = useMemo<Ctx>(
     () => ({

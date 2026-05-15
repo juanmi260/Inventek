@@ -5,6 +5,24 @@ Todas las versiones notables de Inventek.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
 y este proyecto adhiere a [Semantic Versioning](https://semver.org/lang/es/).
 
+## [1.1.2] — 2026-05-15
+
+### Añadido
+- **Auto-sync debounced** tras cada cambio local. Hook Dexie sobre
+  `syncEvents` que detecta inserciones con `deviceId === local` y
+  programa una sincronización 2 segundos después. Bursts de cambios
+  (p. ej. una entrada con varias líneas) se acumulan y disparan un
+  único sync al final.
+- Si una sincronización ya está en curso, el auto-sync no interfiere.
+- Eventos aplicados desde un peer (deviceId remoto) no disparan el
+  timer, evitando bucles de sincronización.
+
+### Limitación conocida
+- Los cambios hechos en el **primario** no se empujan a las réplicas
+  todavía. Para verlos en una réplica hay que (a) hacer un cambio en
+  la réplica (arrastra los del primario al sincronizar), (b) reabrir
+  la app o (c) tocar "Sincronizar ahora con el primario".
+
 ## [1.1.1] — 2026-05-15
 
 Fixes tras el primer test del flujo de sync continua.
